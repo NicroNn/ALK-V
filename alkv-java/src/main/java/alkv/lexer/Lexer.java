@@ -18,6 +18,7 @@ public class Lexer {
             Map.entry("else", TokenType.ELSE),
             Map.entry("while", TokenType.WHILE),
             Map.entry("for", TokenType.FOR),
+            Map.entry("in", TokenType.IN),
             Map.entry("return", TokenType.RETURN),
             Map.entry("public", TokenType.PUBLIC),
             Map.entry("private", TokenType.PRIVATE),
@@ -52,11 +53,14 @@ public class Lexer {
                 case '*' -> add(TokenType.STAR, "*", startLine, startCol);
                 case '%' -> add(TokenType.PERCENT, "%", startLine, startCol);
 
-                case '=' -> add(match('=') ? TokenType.EQ : TokenType.ASSIGN,
-                        match('=') ? "==" : "=", startLine, startCol);
-
-                case '!' -> add(match('=') ? TokenType.NEQ : TokenType.NOT,
-                        match('=') ? "!=" : "!", startLine, startCol);
+                case '=' -> {
+                    boolean eq = match('=');
+                    add(eq ? TokenType.EQ : TokenType.ASSIGN, eq ? "==" : "=", startLine, startCol);
+                }
+                case '!' -> {
+                    boolean neq = match('=');
+                    add(neq ? TokenType.NEQ : TokenType.NOT, neq ? "!=" : "!", startLine, startCol);
+                }
 
                 case '<' -> add(match('=') ? TokenType.LE : TokenType.LT,
                         match('=') ? "<=" : "<", startLine, startCol);

@@ -16,6 +16,7 @@ public enum TokenType {
     ELSE,
     WHILE,
     FOR,
+    IN,
     RETURN,
     PUBLIC,
     PRIVATE,

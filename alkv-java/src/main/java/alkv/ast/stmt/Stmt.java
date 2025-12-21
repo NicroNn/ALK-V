@@ -1,5 +1,4 @@
 package alkv.ast.stmt;
 
 public sealed interface Stmt
-        permits BlockStmt, IfStmt, WhileStmt, ForStmt,
-        ReturnStmt, VarDeclStmt, ExprStmt {}
+        permits BlockStmt, ExprStmt, ForRangeStmt, ForStmt, IfStmt, ReturnStmt, VarDeclStmt, WhileStmt {}
