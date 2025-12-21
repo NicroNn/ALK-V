@@ -62,11 +62,14 @@ public class Lexer {
                     add(neq ? TokenType.NEQ : TokenType.NOT, neq ? "!=" : "!", startLine, startCol);
                 }
 
-                case '<' -> add(match('=') ? TokenType.LE : TokenType.LT,
-                        match('=') ? "<=" : "<", startLine, startCol);
-
-                case '>' -> add(match('=') ? TokenType.GE : TokenType.GT,
-                        match('=') ? ">=" : ">", startLine, startCol);
+                case '<' -> {
+                    boolean le = match('=');
+                    add(le ? TokenType.LE : TokenType.LT, le ? "<=" : "<", startLine, startCol);
+                }
+                case '>' -> {
+                    boolean ge = match('=');
+                    add(ge ? TokenType.GE : TokenType.GT, ge ? ">=" : ">", startLine, startCol);
+                }
 
                 case '&' -> {
                     if (match('&')) add(TokenType.AND, "&&", startLine, startCol);
@@ -97,7 +100,9 @@ public class Lexer {
                 case ',' -> add(TokenType.COMMA, ",", startLine, startCol);
 
                 case '.' -> {
-                    if (match('.') && match('.')) {
+                    if (peek() == '.' && peekNext() == '.') {
+                        advance();
+                        advance();
                         add(TokenType.RANGE, "...", startLine, startCol);
                     } else {
                         add(TokenType.DOT, ".", startLine, startCol);
