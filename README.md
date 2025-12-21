@@ -239,7 +239,27 @@ end : int = ochev.Epoch.Now();
 ochev.Out("Time: " + (end - start) + "ms");
 ```
 
-## 8. План разработки
+## 8. Архитектура
+[ ALK-V source ]\
+│\
+▼\
+[ Java compiler ]\
+├─ Lexer\
+├─ Parser\
+├─ AST\
+├─ Type checker\
+└─ Bytecode (.alkb)\
+│\
+▼\
+[ Native runtime ]\
+├─ Bytecode loader\
+├─ Interpreter\
+├─ Custom heap\
+├─ Custom GC\
+└─ Handwritten JIT → machine code
+
+
+## 9. План разработки
 
 ### Этап 1: Ядро языка
 - [ ] Лексический анализатор
