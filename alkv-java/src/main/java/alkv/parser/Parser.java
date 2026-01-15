@@ -29,6 +29,9 @@ import alkv.ast.type.PrimitiveTypeRef;
 import alkv.ast.type.TypeRef;
 import alkv.lexer.Token;
 import alkv.lexer.TokenType;
+import alkv.ast.decl.FieldDecl;
+import alkv.ast.decl.MethodDecl;
+import alkv.ast.decl.ConstructorDecl;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -81,15 +84,75 @@ public final class Parser {
         return ps;
     }
 
-    // ---------- class (заглушка, если нужно) ----------
+    // ---------- class ----------
     private ClassDecl parseClassDecl() {
-        Token name = consume(TokenType.IDENTIFIER, "Expected class name");
+        Token classNameTok = consume(TokenType.IDENTIFIER, "Expected class name");
+        String className = classNameTok.lexeme();
+
         consume(TokenType.LBRACE, "Expected '{' after class name");
-        // TODO: public:/private: секции; поля/методы/конструктор
-        // Пока можно пропустить содержимое до '}' чтобы не стопориться:
-        while (!check(TokenType.RBRACE) && !check(TokenType.EOF)) advance();
-        consume(TokenType.RBRACE, "Expected '}' after class");
-        return new ClassDecl(name.lexeme(), List.of(), List.of());
+
+        List<FieldDecl> fields = new ArrayList<>();
+        List<MethodDecl> methods = new ArrayList<>();
+        List<ConstructorDecl> constructors = new ArrayList<>();
+
+        boolean currentPublic = false; // default private
+
+        while (!check(TokenType.RBRACE) && !check(TokenType.EOF)) {
+
+            // public: / private:
+            if (check(TokenType.PUBLIC) || check(TokenType.PRIVATE)) {
+                currentPublic = parseAccessLabel();
+                continue;
+            }
+
+            // constructor: ClassName(params) { ... }
+            if (check(TokenType.IDENTIFIER)
+                    && peek().lexeme().equals(className)
+                    && checkNext(TokenType.LPAREN)) {
+                constructors.add(parseConstructorDecl(className, currentPublic));
+                continue;
+            }
+
+            // field/method
+            Token memberName = consume(TokenType.IDENTIFIER, "Expected field/method name");
+            consume(TokenType.COLON, "Expected ':' after member name");
+            TypeRef t = parseTypeRef();
+
+            // method: name : type (params) { ... }
+            if (match(TokenType.LPAREN)) {
+                List<FunctionDecl.Param> params = parseParamsOpt();
+                consume(TokenType.RPAREN, "Expected ')' after parameters");
+                BlockStmt body = parseBlock();
+                methods.add(new MethodDecl(memberName.lexeme(), t, params, body, currentPublic));
+                continue;
+            }
+
+            // field: name : type ;
+            consume(TokenType.SEMICOLON, "Expected ';' after field declaration");
+            fields.add(new FieldDecl(memberName.lexeme(), t, currentPublic));
+        }
+
+        consume(TokenType.RBRACE, "Expected '}' after class body");
+        return new ClassDecl(className, fields, methods, constructors);
+    }
+
+    private boolean parseAccessLabel() {
+        boolean isPublic;
+        if (match(TokenType.PUBLIC)) isPublic = true;
+        else if (match(TokenType.PRIVATE)) isPublic = false;
+        else throw error(peek(), "Expected 'public' or 'private'");
+
+        consume(TokenType.COLON, "Expected ':' after access label");
+        return isPublic;
+    }
+
+    private ConstructorDecl parseConstructorDecl(String className, boolean isPublic) {
+        consume(TokenType.IDENTIFIER, "Expected constructor name"); // имя класса
+        consume(TokenType.LPAREN, "Expected '(' after constructor name");
+        List<FunctionDecl.Param> params = parseParamsOpt();
+        consume(TokenType.RPAREN, "Expected ')' after parameters");
+        BlockStmt body = parseBlock();
+        return new ConstructorDecl(className, params, body, isPublic);
     }
 
     // ---------- block / statements ----------
