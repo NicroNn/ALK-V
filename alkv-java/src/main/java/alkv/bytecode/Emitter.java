@@ -7,6 +7,7 @@ public final class Emitter {
     private final List<Insn> code = new ArrayList<>();
 
     public int pc() { return code.size(); }
+
     public List<Insn> code() { return code; }
 
     public Label newLabel() { return new Label(); }
@@ -28,34 +29,60 @@ public final class Emitter {
         code.add(Insn.AsBx(op, a, sbx));
     }
 
-    public void jmp(Label target) {
+    // --- jumps ---
+
+    private static void checkSbxRange(int sbx) {
+        if (sbx < Short.MIN_VALUE || sbx > Short.MAX_VALUE) {
+            throw new IllegalStateException("Jump offset out of s16 range: " + sbx);
+        }
+    }
+
+    private void emitJump(Opcode op, int a, Label target) {
         int at = pc();
-        code.add(Insn.AsBx(Opcode.JMP, 0, 0)); // placeholder
-        target.patchSites.add(at);
+        int nextPc = at + 1;
+
+        if (target.position != -1) {
+            int sbx = target.position - nextPc; // relative from _next_ instruction
+            checkSbxRange(sbx);
+            code.add(Insn.AsBx(op, a, sbx));
+        } else {
+            code.add(Insn.AsBx(op, a, 0)); // placeholder
+            target.patchSites.add(at);
+        }
+    }
+
+    public void jmp(Label target) {
+        emitJump(Opcode.JMP, 0, target);
     }
 
     public void jmpT(int condReg, Label target) {
-        int at = pc();
-        code.add(Insn.AsBx(Opcode.JMP_T, condReg, 0)); // placeholder
-        target.patchSites.add(at);
+        emitJump(Opcode.JMP_T, condReg, target);
     }
 
     public void jmpF(int condReg, Label target) {
-        int at = pc();
-        code.add(Insn.AsBx(Opcode.JMP_F, condReg, 0)); // placeholder
-        target.patchSites.add(at);
+        emitJump(Opcode.JMP_F, condReg, target);
     }
 
     public void patch(Label target) {
         if (target.position == -1) throw new IllegalStateException("Label not bound");
+
         for (int at : target.patchSites) {
             int nextPc = at + 1;
-            int sbx = target.position - nextPc; // relative from *next* instruction [web:147]
+            int sbx = target.position - nextPc; // relative from _next_ instruction
+            checkSbxRange(sbx);
+
             Insn old = code.get(at);
             int oldWord = old.word();
-            int op = oldWord & 0xFF;
+
+            int opByte = oldWord & 0xFF;
+            if (opByte < 0 || opByte >= Opcode.values().length) {
+                throw new IllegalStateException("Bad opcode byte in instruction word: " + opByte);
+            }
+
             int a = (oldWord >>> 8) & 0xFF;
-            code.set(at, Insn.AsBx(Opcode.values()[op], a, sbx));
+            Opcode op = Opcode.values()[opByte];
+
+            code.set(at, Insn.AsBx(op, a, sbx));
         }
         target.patchSites.clear();
     }

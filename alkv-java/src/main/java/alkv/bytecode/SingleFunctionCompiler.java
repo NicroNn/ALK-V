@@ -13,7 +13,6 @@ import java.util.*;
 import static alkv.bytecode.Opcode.*;
 
 public final class SingleFunctionCompiler {
-
     public record CompiledFunction(ConstPool consts, List<Insn> code, int regCount) {}
 
     private final TypeChecker.Result sema;
@@ -22,6 +21,10 @@ public final class SingleFunctionCompiler {
 
     private final Deque<Map<String, Integer>> scopes = new ArrayDeque<>();
     private final Deque<Integer> freeTemps = new ArrayDeque<>();
+
+    // защита от двойного free одного и того же регистра
+    private final boolean[] isFree = new boolean[256];
+
     private int nextReg = 0;
 
     public SingleFunctionCompiler(TypeChecker.Result sema) {
@@ -43,19 +46,20 @@ public final class SingleFunctionCompiler {
         out.emitABC(RET, 255, 0, 0);
 
         popScope();
-
-        // пропатчить все метки, которые были целями
-        // (патчим сразу после bind конкретной метки, см. ниже — так проще: вызывай patch() после bind())
         return new CompiledFunction(consts, out.code(), nextReg);
     }
 
     // ---------- scopes ----------
     private void pushScope() { scopes.push(new HashMap<>()); }
+
     private void popScope() {
         Map<String, Integer> m = scopes.pop();
-        for (int r : m.values()) freeTemps.add(r); // локалы можно переиспользовать после выхода из scope
+        // локалы можно переиспользовать после выхода из scope
+        for (int r : m.values()) freeReg(r);
     }
+
     private void define(String name, int reg) { scopes.peek().put(name, reg); }
+
     private Integer resolve(String name) {
         for (Map<String, Integer> s : scopes) {
             Integer r = s.get(name);
@@ -64,16 +68,37 @@ public final class SingleFunctionCompiler {
         return null;
     }
 
+    private boolean isCapturedByScopes(int reg) {
+        for (Map<String, Integer> s : scopes) {
+            for (int v : s.values()) {
+                if (v == reg) return true;
+            }
+        }
+        return false;
+    }
+
     // ---------- regs ----------
     private int allocReg() {
         Integer r = freeTemps.pollFirst();
-        if (r != null) return r;
+        if (r != null) {
+            isFree[r] = false;
+            return r;
+        }
         int v = nextReg++;
         if (v > 250) throw new RuntimeException("Register overflow (u8): " + v);
+        isFree[v] = false;
         return v;
     }
+
     private void freeReg(int r) {
-        // не освобождаем параметры/локалы насильно — только временные через явный free
+        if (r == 255) return;
+        // нельзя освобождать регистры, которые принадлежат живым переменным/параметрам
+        if (isCapturedByScopes(r)) return;
+
+        if (r < 0 || r >= isFree.length) return;
+        if (isFree[r]) return; // уже свободен
+
+        isFree[r] = true;
         freeTemps.addFirst(r);
     }
 
@@ -93,8 +118,6 @@ public final class SingleFunctionCompiler {
                 define(v.name(), dst);
                 if (v.initializer() != null) {
                     int rhs = emitExpr(v.initializer());
-                    Type dstT = sema.exprTypes().getOrDefault(v.initializer(), null); // не идеально, но достаточно
-                    // если нужно int->float для инициализации — проще сделать через TypeUtil и семантику переменной (позже можно подтянуть declared type)
                     out.emitABC(MOV, dst, rhs, 0);
                     freeReg(rhs);
                 }
@@ -116,11 +139,8 @@ public final class SingleFunctionCompiler {
             }
 
             case IfStmt i -> emitIf(i);
-
             case WhileStmt w -> emitWhile(w);
-
             case ForRangeStmt fr -> emitForRange(fr);
-
             case ForStmt f -> emitForCStyle(f);
         }
     }
@@ -156,6 +176,8 @@ public final class SingleFunctionCompiler {
         freeReg(cond);
 
         emitBlock(w.body());
+
+        // backward jump теперь корректный: Emitter сам пропатчит, т.к. head уже bound
         out.jmp(head);
 
         out.bind(exit);
@@ -175,12 +197,11 @@ public final class SingleFunctionCompiler {
 
         Label head = out.newLabel();
         Label exit = out.newLabel();
+
         out.bind(head);
 
         int toR = emitExpr(fr.to());
         int condR = allocReg();
-
-        // int-only v1: можно расширить до float, если захочешь
         out.emitABC(LT_I, condR, iReg, toR);
         freeReg(toR);
 
@@ -191,9 +212,11 @@ public final class SingleFunctionCompiler {
 
         int one = allocReg();
         out.emitABx(LOADK, one, consts.add(new ConstPool.KInt(1)));
+
         int tmp = allocReg();
         out.emitABC(ADD_I, tmp, iReg, one);
         out.emitABC(MOV, iReg, tmp, 0);
+
         freeReg(one);
         freeReg(tmp);
 
@@ -215,9 +238,11 @@ public final class SingleFunctionCompiler {
 
         out.bind(head);
 
-        int cond = emitExpr(f.condition());
-        out.jmpF(cond, exit);
-        freeReg(cond);
+        if (f.condition() != null) {
+            int cond = emitExpr(f.condition());
+            out.jmpF(cond, exit);
+            freeReg(cond);
+        }
 
         emitBlock(f.body());
 
@@ -235,6 +260,10 @@ public final class SingleFunctionCompiler {
     }
 
     // ---------- expressions ----------
+    private static boolean isNumeric(Type t) {
+        return t == PrimitiveType.INT || t == PrimitiveType.FLOAT;
+    }
+
     private int emitExpr(Expr e) {
         if (e instanceof IntLiteral lit) {
             int r = allocReg();
@@ -242,40 +271,63 @@ public final class SingleFunctionCompiler {
             out.emitABx(LOADK, r, id);
             return r;
         }
+
         if (e instanceof StringLiteral lit) {
             int r = allocReg();
             int id = consts.add(new ConstPool.KString(lit.value()));
             out.emitABx(LOADK, r, id);
             return r;
         }
+
         if (e instanceof BoolLiteral lit) {
             int r = allocReg();
             int id = consts.add(new ConstPool.KBool(lit.value()));
             out.emitABx(LOADK, r, id);
             return r;
         }
+
         if (e instanceof VarExpr v) {
             Integer r = resolve(v.name());
             if (r == null) throw new RuntimeException("Unknown var: " + v.name());
-            // читаем var как значение: просто возвращаем регистр (без MOV)
+            // читаем var как значение: возвращаем регистр (без MOV)
             return r;
         }
+
         if (e instanceof UnaryExpr u) {
             int a = emitExpr(u.expr());
             int dst = allocReg();
+
             switch (u.op()) {
                 case NEG -> {
-                    // NEG: dst = 0 - a (пока так, если нет отдельного NEG)
-                    int zero = allocReg();
-                    out.emitABx(LOADK, zero, consts.add(new ConstPool.KInt(0)));
-                    out.emitABC(SUB_I, dst, zero, a);
-                    freeReg(zero);
+                    Type t = sema.exprTypes().get(u.expr());
+                    if (t == PrimitiveType.FLOAT) {
+                        // гарантируем float-операнд
+                        Type at = sema.exprTypes().get(u.expr());
+                        if (at == PrimitiveType.INT) {
+                            int af = allocReg();
+                            out.emitABC(I2F, af, a, 0);
+                            freeReg(a);
+                            a = af;
+                        }
+                        int zero = allocReg();
+                        out.emitABx(LOADK, zero, consts.add(new ConstPool.KFloat(0.0f)));
+                        out.emitABC(SUB_F, dst, zero, a);
+                        freeReg(zero);
+                    } else {
+                        int zero = allocReg();
+                        out.emitABx(LOADK, zero, consts.add(new ConstPool.KInt(0)));
+                        out.emitABC(SUB_I, dst, zero, a);
+                        freeReg(zero);
+                    }
                 }
+
                 case NOT -> out.emitABC(NOT, dst, a, 0);
             }
+
             freeReg(a);
             return dst;
         }
+
         if (e instanceof BinaryExpr b) return emitBinary(b);
         if (e instanceof AssignExpr a) return emitAssign(a);
 
@@ -284,16 +336,13 @@ public final class SingleFunctionCompiler {
 
     private int emitAssign(AssignExpr a) {
         int rhs = emitExpr(a.value());
-
         if (a.target() instanceof VarExpr v) {
             Integer dst = resolve(v.name());
             if (dst == null) throw new RuntimeException("Unknown var: " + v.name());
             out.emitABC(MOV, dst, rhs, 0);
-            // результат присваивания = значение (можно вернуть dst)
             freeReg(rhs);
             return dst;
         }
-
         throw new RuntimeException("Unsupported assignment target (v1)");
     }
 
@@ -304,9 +353,18 @@ public final class SingleFunctionCompiler {
         int l = emitExpr(b.left());
         int r = emitExpr(b.right());
 
-        // implicit int->float
-        boolean wantFloat = (TypeUtil.numericResult(lt, rt) == PrimitiveType.FLOAT);
+        boolean numericOrCompareOrEq = switch (b.op()) {
+            case ADD, SUB, MUL, DIV, MOD,
+                 LT, LE, GT, GE,
+                 EQ, NE -> true;
+            default -> false;
+        };
 
+        boolean wantFloat = numericOrCompareOrEq
+                && isNumeric(lt) && isNumeric(rt)
+                && (lt == PrimitiveType.FLOAT || rt == PrimitiveType.FLOAT);
+
+        // implicit int->float
         if (wantFloat) {
             if (lt == PrimitiveType.INT) {
                 int lf = allocReg();
@@ -323,7 +381,6 @@ public final class SingleFunctionCompiler {
         }
 
         int dst = allocReg();
-
         switch (b.op()) {
             case ADD -> out.emitABC(wantFloat ? ADD_F : ADD_I, dst, l, r);
             case SUB -> out.emitABC(wantFloat ? SUB_F : SUB_I, dst, l, r);
