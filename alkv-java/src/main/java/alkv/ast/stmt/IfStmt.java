@@ -1,9 +1,11 @@
 package alkv.ast.stmt;
 
 import alkv.ast.expr.Expr;
+import java.util.List;
 
 public record IfStmt(
-        Expr condition,
-        BlockStmt thenBlock,
-        BlockStmt elseBlock
-) implements Stmt {}
+        List<Branch> branches,   // if + else if ...
+        BlockStmt elseBlock      // может быть null
+) implements Stmt {
+    public record Branch(Expr condition, BlockStmt body) {}
+}

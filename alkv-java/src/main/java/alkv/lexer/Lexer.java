@@ -22,13 +22,12 @@ public class Lexer {
             Map.entry("return", TokenType.RETURN),
             Map.entry("public", TokenType.PUBLIC),
             Map.entry("private", TokenType.PRIVATE),
-
+            Map.entry("new", TokenType.NEW),              // <-- add
             Map.entry("int", TokenType.INT),
             Map.entry("float", TokenType.FLOAT),
             Map.entry("bool", TokenType.BOOL),
             Map.entry("string", TokenType.STRING),
             Map.entry("void", TokenType.VOID),
-
             Map.entry("T", TokenType.BOOL_LITERAL),
             Map.entry("F", TokenType.BOOL_LITERAL)
     );
@@ -63,12 +62,23 @@ public class Lexer {
                 }
 
                 case '<' -> {
-                    boolean le = match('=');
-                    add(le ? TokenType.LE : TokenType.LT, le ? "<=" : "<", startLine, startCol);
+                    // ochev.<<< treated as identifier "<<<"
+                    if (match('<') && match('<')) {
+                        add(TokenType.IDENTIFIER, "<<<", startLine, startCol);
+                    } else {
+                        boolean le = match('=');
+                        add(le ? TokenType.LE : TokenType.LT, le ? "<=" : "<", startLine, startCol);
+                    }
                 }
+
                 case '>' -> {
-                    boolean ge = match('=');
-                    add(ge ? TokenType.GE : TokenType.GT, ge ? ">=" : ">", startLine, startCol);
+                    // ochev.>>> treated as identifier ">>>"
+                    if (match('>') && match('>')) {
+                        add(TokenType.IDENTIFIER, ">>>", startLine, startCol);
+                    } else {
+                        boolean ge = match('=');
+                        add(ge ? TokenType.GE : TokenType.GT, ge ? ">=" : ">", startLine, startCol);
+                    }
                 }
 
                 case '&' -> {

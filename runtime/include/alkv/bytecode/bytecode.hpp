@@ -5,10 +5,11 @@
 
 namespace alkv::bc {
 
+// ДОЛЖНО совпадать по ordinal с Java enum Opcode
 enum class Opcode : uint8_t {
     NOP,
-    MOV,
-    LOADK,
+    MOV,        // ABC: A=dst, B=src
+    LOADK,      // ABx: A=dst, Bx=constId
 
     ADD_I, SUB_I, MUL_I, DIV_I, MOD_I,
     ADD_F, SUB_F, MUL_F, DIV_F, MOD_F,
@@ -17,14 +18,33 @@ enum class Opcode : uint8_t {
     LT_F, LE_F, GT_F, GE_F,
 
     EQ, NE,
-    NOT, AND, OR,
+    NOT,
 
-    JMP,
-    JMP_T,
-    JMP_F,
+    JMP,        // AsBx
+    JMP_T,      // AsBx: A=condReg
+    JMP_F,      // AsBx: A=condReg
 
-    RET,
-    I2F
+    I2F,        // ABC: A=dst(float), B=src(int)
+
+    // --- arrays ---
+    NEW_ARR,    // ABC: A=dstArr, B=sizeReg, C=0
+    GET_ELEM,   // ABC: A=dst, B=arrReg, C=indexReg
+    SET_ELEM,   // ABC: A=arrReg, B=indexReg, C=valueReg
+
+    // --- objects/classes ---
+    NEW_OBJ,    // ABx: A=dstObj, Bx=constId(KClass)
+    // ВАЖНО: по факту компилятор сейчас использует ABC:
+    // GET_FIELD: A=dst, B=objReg, C=fieldRefReg(KField)
+    // SET_FIELD: A=objReg, B=fieldRefReg, C=valueReg
+    GET_FIELD,
+    SET_FIELD,
+
+    // --- calls ---
+    CALL,       // ABC: A=dst, B=funcReg, C=argc
+    CALLK,      // ABx: A=dst, Bx=constId(KFunc/KMethod)
+    CALL_NATIVE,// ABC: A=dst, B=nativeId, C=argc
+
+    RET         // ABC: A=valueReg (или 255 = void)
 };
 
 struct DecodedABC { Opcode op; uint8_t a,b,c; };
@@ -55,8 +75,8 @@ inline DecodedAsBx decodeAsBx(uint32_t w) {
 }
 
 struct Function {
-    std::vector<alkv::vm::Value> constPool; // runtime values
-    std::vector<uint32_t> code;             // instruction words
+    std::vector<alkv::vm::Value> constPool; // runtime values (включая func/class/field refs)
+    std::vector<uint32_t> code;
     uint16_t regCount = 0;
 };
 

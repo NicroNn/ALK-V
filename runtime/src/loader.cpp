@@ -63,51 +63,67 @@ static void expectTag(std::istream& in, char a, char b) {
 }
 
 static uint32_t inferRegCountFromCode(const std::vector<uint32_t>& code) {
-    // Пытаемся вывести минимально достаточное кол-во регистров.
-    // Берём max(A,B,C) по тем инструкциям, где поля имеют смысл.
     uint32_t maxReg = 0;
     bool any = false;
 
+    auto consider = [&](uint32_t r) {
+        if (r == 255) return; // RET void
+        maxReg = std::max(maxReg, r);
+        any = true;
+    };
+
     for (uint32_t w : code) {
         auto op = decodeOp(w);
-        auto abc = decodeABC(w);
-
-        auto consider = [&](uint32_t r) {
-            if (r == 255) return; // спец для RET void
-            maxReg = std::max(maxReg, r);
-            any = true;
-        };
 
         switch (op) {
             case Opcode::LOADK: {
-                auto abx = decodeABx(w);
-                consider(abx.a);
+                auto d = decodeABx(w);
+                consider(d.a);
                 break;
             }
+
+            case Opcode::NEW_OBJ:
+            case Opcode::CALLK: {
+                auto d = decodeABx(w);
+                consider(d.a);
+                break;
+            }
+
             case Opcode::MOV:
             case Opcode::ADD_I: case Opcode::SUB_I: case Opcode::MUL_I: case Opcode::DIV_I: case Opcode::MOD_I:
             case Opcode::ADD_F: case Opcode::SUB_F: case Opcode::MUL_F: case Opcode::DIV_F: case Opcode::MOD_F:
             case Opcode::LT_I: case Opcode::LE_I: case Opcode::GT_I: case Opcode::GE_I:
             case Opcode::LT_F: case Opcode::LE_F: case Opcode::GT_F: case Opcode::GE_F:
             case Opcode::EQ: case Opcode::NE:
-            case Opcode::AND: case Opcode::OR:
-            case Opcode::I2F:
             case Opcode::NOT:
-            case Opcode::RET:
-                consider(abc.a);
-                consider(abc.b);
-                consider(abc.c);
+            case Opcode::I2F:
+            case Opcode::NEW_ARR:
+            case Opcode::GET_ELEM:
+            case Opcode::SET_ELEM:
+            case Opcode::GET_FIELD:
+            case Opcode::SET_FIELD:
+            case Opcode::CALL:
+            case Opcode::CALL_NATIVE:
+            case Opcode::RET: {
+                auto d = decodeABC(w);
+                consider(d.a);
+                consider(d.b);
+                consider(d.c);
                 break;
+            }
 
             case Opcode::JMP_T:
             case Opcode::JMP_F: {
-                auto asbx = decodeAsBx(w);
-                consider(asbx.a);
+                auto d = decodeAsBx(w);
+                consider(d.a);
                 break;
             }
 
             case Opcode::JMP:
             case Opcode::NOP:
+                break;
+
+            default:
                 break;
         }
     }
@@ -177,6 +193,7 @@ static LoadedFunction readOneFunction(std::istream& in, alkv::vm::Heap& heap) {
     out.fn.constPool.reserve(nConsts);
 
     for (uint32_t i = 0; i < nConsts; ++i) {
+        // ... внутри readOneFunction CP loop:
         uint8_t type = readU8(in);
         switch (type) {
             case 0: { // int
@@ -189,7 +206,7 @@ static LoadedFunction readOneFunction(std::istream& in, alkv::vm::Heap& heap) {
                 out.fn.constPool.push_back(alkv::vm::Value::f32(v));
                 break;
             }
-            case 2: { // bool (writeBoolean -> 1 byte)
+            case 2: { // bool
                 uint8_t b = readU8(in);
                 out.fn.constPool.push_back(alkv::vm::Value::boolean(b != 0));
                 break;
@@ -199,6 +216,47 @@ static LoadedFunction readOneFunction(std::istream& in, alkv::vm::Heap& heap) {
                 std::string s = readBytesAsString(in, len);
                 auto* obj = heap.allocString(std::string_view(s.data(), s.size()));
                 out.fn.constPool.push_back(alkv::vm::Value::object(obj));
+                break;
+            }
+            case 4: { // func
+                uint16_t nlen = readU16BE(in);
+                std::string name = readBytesAsString(in, nlen);
+                uint32_t arity = readU32BE(in);
+                auto* nm = heap.allocString(name);
+                auto* fr = heap.allocFuncRef(nm, arity);
+                out.fn.constPool.push_back(alkv::vm::Value::object(fr));
+                break;
+            }
+            case 5: { // class
+                uint16_t nlen = readU16BE(in);
+                std::string name = readBytesAsString(in, nlen);
+                auto* nm = heap.allocString(name);
+                auto* cr = heap.allocClassRef(nm);
+                out.fn.constPool.push_back(alkv::vm::Value::object(cr));
+                break;
+            }
+            case 6: { // field
+                uint16_t clen = readU16BE(in);
+                std::string cls = readBytesAsString(in, clen);
+                uint16_t flen = readU16BE(in);
+                std::string fld = readBytesAsString(in, flen);
+                auto* c = heap.allocString(cls);
+                auto* f = heap.allocString(fld);
+                auto* fr = heap.allocFieldRef(c, f);
+                out.fn.constPool.push_back(alkv::vm::Value::object(fr));
+                break;
+            }
+            case 7: { // method (если тебе нужно отдельно)
+                uint16_t clen = readU16BE(in);
+                std::string cls = readBytesAsString(in, clen);
+                uint16_t mlen = readU16BE(in);
+                std::string m = readBytesAsString(in, mlen);
+                uint32_t arity = readU32BE(in);
+                // В рантайме проще хранить как FuncRef с already-mangled именем:
+                std::string mangled = cls + "." + m;
+                auto* nm = heap.allocString(mangled);
+                auto* fr = heap.allocFuncRef(nm, arity);
+                out.fn.constPool.push_back(alkv::vm::Value::object(fr));
                 break;
             }
             default:

@@ -28,23 +28,16 @@ int main(int argc, char** argv) {
         std::cerr << "Usage: alkv_vm <file.alkb> [functionName]\n";
         return 2;
     }
-
     std::string path = argv[1];
     std::string fnName = (argc >= 3) ? argv[2] : "main";
 
     try {
         vm::VM machine;
 
-        // загружаем выбранную функцию; строки попадут в machine.mem.heap
-        auto loaded = bc::loadFunctionByName(path, machine.mem.heap, fnName);
+        auto all = bc::loadModuleFromFile(path, machine.mem.heap);
+        machine.loadModule(all);
 
-        // Сейчас CALL нет, поэтому args пустые; numParams можно проверять:
-        if (loaded.numParams != 0) {
-            std::cerr << "Warning: function expects params=" << loaded.numParams
-                      << ", but VM demo runs with no args.\n";
-        }
-
-        vm::Value result = machine.run(loaded.fn, {});
+        vm::Value result = machine.run(fnName, {});
         printValue(result);
         return 0;
     } catch (const std::exception& e) {

@@ -1,7 +1,6 @@
 package alkv.lexer;
 
 public enum TokenType {
-
     // literals
     IDENTIFIER,
     INT_LITERAL,
@@ -20,7 +19,7 @@ public enum TokenType {
     RETURN,
     PUBLIC,
     PRIVATE,
-
+    NEW,        // <-- add
     // types
     INT,
     FLOAT,
@@ -42,6 +41,5 @@ public enum TokenType {
     LBRACKET, RBRACKET,
     COLON, SEMICOLON, COMMA,
     DOT, RANGE,
-
     EOF
 }

@@ -1,18 +1,12 @@
 package alkv.bytecode;
 
 import alkv.ast.Program;
-import alkv.ast.decl.FunctionDecl;
+import alkv.ast.decl.*;
 import alkv.sema.TypeChecker;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
-/**
- * Компилятор модуля (всей программы)
- * Компилирует все функции в один модуль байткода
- */
 public final class ModuleCompiler {
-
     public record CompiledModule(List<CompiledFunction> functions) {}
 
     public record CompiledFunction(
@@ -29,35 +23,35 @@ public final class ModuleCompiler {
         this.sema = sema;
     }
 
-    /**
-     * Компилирует всю программу
-     */
     public CompiledModule compileProgram(Program program) {
-        List<CompiledFunction> compiledFunctions = new ArrayList<>();
+        List<CompiledFunction> compiled = new ArrayList<>();
 
-        for (Object declObj : program.functions()) {
-            if (declObj instanceof FunctionDecl fn) {
-                CompiledFunction compiled = compileFunction(fn);
-                compiledFunctions.add(compiled);
+        // 1) обычные функции
+        for (FunctionDecl fn : program.functions()) {
+            compiled.add(compileFunction(fn.name(), fn));
+        }
+
+        // 2) методы/конструкторы классов -> тоже функции (name-mangled)
+        for (ClassDecl cd : program.classes()) {
+            for (MethodDecl m : cd.methods()) {
+                FunctionDecl lowered = Lowering.lowerMethodToFunction(cd.name(), m);
+                compiled.add(compileFunction(lowered.name(), lowered));
+            }
+            for (ConstructorDecl c : cd.constructors()) {
+                FunctionDecl lowered = Lowering.lowerCtorToFunction(cd.name(), c);
+                compiled.add(compileFunction(lowered.name(), lowered));
             }
         }
 
-        return new CompiledModule(compiledFunctions);
+        return new CompiledModule(compiled);
     }
 
-    /**
-     * Компилирует одну функцию
-     */
-    private CompiledFunction compileFunction(FunctionDecl fn) {
+    private CompiledFunction compileFunction(String name, FunctionDecl fn) {
         var compiler = new SingleFunctionCompiler(sema);
         var result = compiler.compile(fn);
-
-        // Подсчёт параметров
-        int numParams = fn.params().size();
-
         return new CompiledFunction(
-                fn.name(),
-                numParams,
+                name,
+                fn.params().size(),
                 result.consts(),
                 result.code(),
                 result.regCount()

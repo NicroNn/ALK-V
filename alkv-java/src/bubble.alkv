@@ -1,0 +1,23 @@
+fnc main : int () {
+
+    n : int = 10;
+    baseArray : int[10] = [10,9,8,7,6,5,4,3,2,1];
+    sorted : bool = F;
+    while (!sorted) {
+        sorted = T;
+
+        for (i in 1...n) {
+            if (baseArray[i] < baseArray[i-1]) {
+                sorted = F;
+                temp : int = baseArray[i];
+                baseArray[i] = baseArray[i - 1];
+                baseArray[i - 1] = temp;
+
+            }
+        }
+    }
+
+
+    // результат из main (например, последний элемент отсортированного массива)
+    return baseArray[0];
+}

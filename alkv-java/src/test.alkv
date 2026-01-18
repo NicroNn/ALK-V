@@ -1,5 +1,5 @@
 fnc main : int () {
     x : int = 10;
-    if (x == 10) { return 1; }
+    if (x == 10) { return x; }
     return 0;
 }

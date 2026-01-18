@@ -2,28 +2,38 @@
 #include <vector>
 #include <cstdint>
 #include <cassert>
+
 #include "alkv/vm/value.hpp"
 #include "alkv/vm/heap.hpp"
+#include "alkv/bytecode/bytecode.hpp"
 
 namespace alkv::vm {
 
 struct Frame {
-    uint32_t base = 0;      // base index in valueStack
-    uint16_t regCount = 0;  // number of registers
+    uint32_t base = 0;
+    uint16_t regCount = 0;
+
+    const alkv::bc::Function* fn = nullptr;
+    int32_t pc = 0;
+
+    int32_t returnPc = -1;   // куда вернуться в caller
+    uint8_t returnDst = 255; // в какой рег caller положить return (255 = игнор)
 };
 
 class VMMemory {
 public:
     Heap heap;
+    std::vector<Value> valueStack;
+    std::vector<Frame> callStack;
 
-    std::vector<Value> constPool;   // runtime constants (roots)
-    std::vector<Value> valueStack;  // registers of all frames
-    std::vector<Frame> callStack;   // call frames
-
-    std::size_t pushFrame(uint16_t regCount) {
+    std::size_t pushFrame(const alkv::bc::Function* fn, uint16_t regCount, int32_t returnPc, uint8_t returnDst) {
         Frame f;
         f.base = static_cast<uint32_t>(valueStack.size());
         f.regCount = regCount;
+        f.fn = fn;
+        f.pc = 0;
+        f.returnPc = returnPc;
+        f.returnDst = returnDst;
 
         valueStack.resize(valueStack.size() + regCount, Value::nil());
         callStack.push_back(f);
@@ -37,33 +47,30 @@ public:
         valueStack.resize(f.base);
     }
 
-    Frame& currentFrame() {
-        assert(!callStack.empty());
-        return callStack.back();
-    }
+    Frame& currentFrame() { assert(!callStack.empty()); return callStack.back(); }
+    const Frame& currentFrame() const { assert(!callStack.empty()); return callStack.back(); }
 
     Value& reg(uint16_t idx) {
         Frame& f = currentFrame();
         assert(idx < f.regCount);
         return valueStack[f.base + idx];
     }
-
     const Value& reg(uint16_t idx) const {
-        assert(!callStack.empty());
-        const Frame& f = callStack.back();
+        const Frame& f = currentFrame();
         assert(idx < f.regCount);
         return valueStack[f.base + idx];
     }
 
-    // ---- GC root traversal hook ----
+    // ---- GC roots ----
     void markRoots() {
-        // constants
-        for (const auto& v : constPool) markValue(v);
-
-        // all registers in all frames
+        // все regs во всех фреймах
         for (const Frame& fr : callStack) {
             for (uint32_t i = 0; i < fr.regCount; ++i) {
                 markValue(valueStack[fr.base + i]);
+            }
+            // constPool текущей функции фрейма — тоже корни
+            if (fr.fn) {
+                for (const auto& v : fr.fn->constPool) markValue(v);
             }
         }
     }

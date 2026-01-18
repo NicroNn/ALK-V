@@ -3,17 +3,7 @@ package alkv.parser;
 import alkv.ast.Program;
 import alkv.ast.decl.ClassDecl;
 import alkv.ast.decl.FunctionDecl;
-import alkv.ast.expr.ArrayAccessExpr;
-import alkv.ast.expr.AssignExpr;
-import alkv.ast.expr.BinaryExpr;
-import alkv.ast.expr.BoolLiteral;
-import alkv.ast.expr.CallExpr;
-import alkv.ast.expr.Expr;
-import alkv.ast.expr.FieldAccessExpr;
-import alkv.ast.expr.IntLiteral;
-import alkv.ast.expr.StringLiteral;
-import alkv.ast.expr.UnaryExpr;
-import alkv.ast.expr.VarExpr;
+import alkv.ast.expr.*;
 import alkv.ast.stmt.BlockStmt;
 import alkv.ast.stmt.ExprStmt;
 import alkv.ast.stmt.ForRangeStmt;
@@ -217,7 +207,10 @@ public final class Parser {
                 elseB = parseBlock();
             }
         }
-        return new IfStmt(cond, thenB, elseB);
+        return new IfStmt(
+                java.util.List.of(new IfStmt.Branch(cond, thenB)),
+                elseB
+        );
     }
 
     private WhileStmt parseWhile() {
@@ -410,19 +403,31 @@ public final class Parser {
         return e;
     }
 
+    private Expr parseArrayLiteral() {
+        consume(TokenType.LBRACKET, "Expected '['");
+        List<Expr> elems = new ArrayList<>();
+        if (!check(TokenType.RBRACKET)) {
+            do {
+                elems.add(parseExpr());
+            } while (match(TokenType.COMMA));
+        }
+        consume(TokenType.RBRACKET, "Expected ']'");
+        return new ArrayLiteralExpr(elems);
+    }
+
     private Expr parsePrimary() {
+        if (check(TokenType.LBRACKET)) {
+            return parseArrayLiteral();
+        }
         if (match(TokenType.INT_LITERAL)) return new IntLiteral(Integer.parseInt(previous().lexeme()));
         if (match(TokenType.STRING_LITERAL)) return new StringLiteral(previous().lexeme());
         if (match(TokenType.BOOL_LITERAL)) return new BoolLiteral("T".equals(previous().lexeme()));
-
         if (match(TokenType.IDENTIFIER)) return new VarExpr(previous().lexeme());
-
         if (match(TokenType.LPAREN)) {
             Expr e = parseExpr();
             consume(TokenType.RPAREN, "Expected ')'");
             return e;
         }
-
         throw error(peek(), "Expected expression");
     }
 
