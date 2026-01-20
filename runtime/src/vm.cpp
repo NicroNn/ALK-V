@@ -151,6 +151,11 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
     // интерпретатор: всегда исполняем currentFrame()
     while (!mem.callStack.empty()) {
+        auto* ret = new Value();
+        uint8_t end_flag = 0;
+        if (end_flag) {
+            return *ret;
+        }
         Frame& fr = mem.currentFrame();
         const auto& code = fr.fn->code;
 
@@ -161,13 +166,13 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
         uint32_t w = code[fr.pc];
         bc::Opcode op = bc::decodeOp(w);
-        std::cout << "pc = " << fr.pc << std::endl;
+        /*std::cout << "pc = " << fr.pc << std::endl;
         std::cout << "r[" << 0 << "] = " << mem.reg(0).as.i << std::endl;
         std::cout << "r[" << 1 << "] = " << mem.reg(1).as.i << std::endl;
         std::cout << "r[" << 2 << "] = " << mem.reg(2).as.i << std::endl;
         std::cout << "r[" << 3 << "] = " << mem.reg(3).as.i << std::endl;
         std::cout << "r[" << 4 << "] = " << mem.reg(4).as.i << std::endl;
-        std::cout << std::endl;
+        std::cout << std::endl;*/
 
         switch (op) {
             case bc::Opcode::NOP: {
@@ -310,11 +315,11 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
                             int old_pc = fr.pc;
                             if (!compiled_blocks.contains(fr.pc)) {
                                 std::cout << "compiling at pc " << old_pc << " for " << d.sbx << " bytecode instructions" << std::endl;
-                                compiled_blocks[old_pc] = compiler.create_func(d.sbx);
+                                compiled_blocks[old_pc] = compiler.create_func(ret, &end_flag, d.sbx);
                             }
-                            std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
+                            //std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
                             compiled_blocks[old_pc]();
-                            std::cout << "after running block pc = " << fr.pc << std::endl;
+                            //std::cout << "after running block pc = " << fr.pc << std::endl;
                         }
                     } else {
                         compilation_candidates[fr.pc] = 1;

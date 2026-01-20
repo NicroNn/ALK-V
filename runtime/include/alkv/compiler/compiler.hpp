@@ -20,7 +20,7 @@ namespace alkv::compiler {
                           g_fs_T& g_fs,
                           fnByN_T& fnByN,
                           bool logging = false, bool error_handling = false);
-        Func create_func(uint32_t size);
+        Func create_func(vm::Value*, uint8_t*, uint32_t size);
         vm::VMMemory& mem;
         g_fs_T& g_fieldSlots;
         fnByN_T& fnByName_;

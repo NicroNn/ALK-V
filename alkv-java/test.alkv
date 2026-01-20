@@ -1,9 +1,11 @@
 fnc main : bool () {
-    x : int = 10609;
+    x : int = 999907;
+    ret : bool = T;
     for (i : int = 2; i * i <= x; i = i + 1) {
         if (x % i == 0) {
-            return F;
+            ret = F;
+            i = 20000;
         }
     }
-    return T;
+    return ret;
 }

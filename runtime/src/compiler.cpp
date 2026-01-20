@@ -43,7 +43,7 @@ void call_function(fnByN_T* fnByN, vm::VMMemory* mem,
     // поэтому здесь ничего копировать не надо
 }
 
-void return_from_function(vm::VMMemory* mem, uint8_t r) {
+void return_from_function(vm::VMMemory* mem, vm::Value* entry_ret_ptr, uint8_t* end_flag, uint8_t r) {
     vm::Frame* fr = &(mem->currentFrame());
     vm::Value ret = vm::Value::nil();
     if (r != 255) ret = mem->reg(r);
@@ -55,6 +55,8 @@ void return_from_function(vm::VMMemory* mem, uint8_t r) {
 
     if (mem->callStack.empty()) { // ?????
         // возврат из entry
+        *entry_ret_ptr = ret;
+        *end_flag = 1;
         return;
     }
 
@@ -108,13 +110,12 @@ namespace alkv::compiler {
         is_error_handling = error_handling;
     }
 
-    Func Compiler::create_func(uint32_t size) {
+    Func Compiler::create_func(vm::Value* entry_ret_ptr, uint8_t* end_flag, uint32_t size) {
         asmjit::CodeHolder code;
         asmjit::StringLogger logger;
         MyErrorHandler handler;
         code.init(rt.environment(), rt.cpu_features());
         if (is_logging) {
-            std::cout << "ASKDAKSDJKAJD\n";
             code.set_logger(&logger);
         }
         if (is_error_handling) {
@@ -135,6 +136,8 @@ namespace alkv::compiler {
                 }
             }
         }
+
+        asmjit::Label instant_ret = a.new_label();
 
         for (uint32_t i = 0; i < size; ++i) {
             vm::Frame& fr = mem.currentFrame();
@@ -536,24 +539,27 @@ namespace alkv::compiler {
 
                 case bc::Opcode::RET: {
                     auto d = bc::decodeABC(dw);
-                    asmjit::Imm fr_ptr =reinterpret_cast<uintptr_t>(&fr);
                     std::cout << nullptr << ' ' << (size_t)(&mem) << std::endl;
                     asmjit::Imm mem_ptr = reinterpret_cast<uintptr_t>(&mem);
                     a.mov(asmjit::x86::rcx, mem_ptr);
-                    a.mov(asmjit::x86::rdx, fr_ptr);
-                    a.mov(asmjit::x86::r8, d.a);
+                    a.mov(asmjit::x86::rdx, entry_ret_ptr);
+                    a.mov(asmjit::x86::r8, end_flag);
+                    a.mov(asmjit::x86::r9, d.a);
                     a.push(asmjit::x86::rbp);
                     a.mov(asmjit::x86::rbp, asmjit::x86::rsp);
                     a.and_(asmjit::x86::rsp, 0xFFFF'FFFF'FFFF'FFF0); // aligning
                     a.call((void*)return_from_function);
                     a.mov(asmjit::x86::rsp, asmjit::x86::rbp);
                     a.pop(asmjit::x86::rbp);
+                    a.cmp(asmjit::x86::ptr_8(reinterpret_cast<uintptr_t>(end_flag)), 1);
+                    a.je(instant_ret);
                 }
             }
         }
         vm::Frame& fr = mem.currentFrame();
         asmjit::x86::Mem pc_ptr = asmjit::x86::ptr_32(reinterpret_cast<uintptr_t>(&fr.pc));
         a.add(pc_ptr, size);
+        a.bind(instant_ret);
         a.ret();
 
         if (is_logging) {
