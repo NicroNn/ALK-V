@@ -398,16 +398,28 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
             // ---- calls
             case bc::Opcode::CALL: {
                 auto d = abc(w);
+                uint32_t argc = d.c;
+
                 auto* fref = asFuncRef(mem.reg(d.b));
                 auto itf = fnByName_.find(std::string(fref->name->view()));
                 if (itf == fnByName_.end()) throw std::runtime_error("CALL: unknown function");
-
                 const bc::LoadedFunction* callee = itf->second;
+
+                // сохранить аргументы из caller R0..R(argc-1)
+                std::vector<Value> argv;
+                argv.reserve(argc);
+                for (uint32_t i = 0; i < argc; ++i) argv.push_back(mem.reg(static_cast<uint16_t>(i)));
 
                 int32_t returnPc = fr.pc + 1;
                 uint8_t returnDst = d.a;
 
                 mem.pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
+
+                if (argc > callee->fn.regCount) {
+                    throw std::runtime_error("CALL: too many args for callee regCount");
+                }
+                for (uint32_t i = 0; i < argc; ++i) mem.reg(static_cast<uint16_t>(i)) = argv[i];
+
                 break;
             }
 
@@ -416,17 +428,28 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
                 if (d.bx >= fr.fn->constPool.size()) throw std::runtime_error("CALLK: const OOB");
 
                 auto* fref = asFuncRef(fr.fn->constPool[d.bx]);
+                uint32_t argc = fref->arity;
+
                 auto itf = fnByName_.find(std::string(fref->name->view()));
                 if (itf == fnByName_.end()) {
                     throw std::runtime_error("CALLK: function not found: " + std::string(fref->name->view()));
                 }
-
                 const bc::LoadedFunction* callee = itf->second;
+
+                std::vector<Value> argv;
+                argv.reserve(argc);
+                for (uint32_t i = 0; i < argc; ++i) argv.push_back(mem.reg(static_cast<uint16_t>(i)));
 
                 int32_t returnPc = fr.pc + 1;
                 uint8_t returnDst = d.a;
 
                 mem.pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
+
+                if (argc > callee->fn.regCount) {
+                    throw std::runtime_error("CALLK: too many args for callee regCount");
+                }
+                for (uint32_t i = 0; i < argc; ++i) mem.reg(static_cast<uint16_t>(i)) = argv[i];
+
                 break;
             }
 
