@@ -2,10 +2,12 @@
 #include <cmath>
 #include <stdexcept>
 #include <iostream>
+#include <chrono>
 #include "alkv/vm/object.hpp"
 
 namespace alkv::vm {
 
+// ======= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =======
 static ObjArray* asArray(const Value& v) {
     if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::Array)
         throw std::runtime_error("TypeError: expected array");
@@ -52,7 +54,6 @@ static bool valueEquals(const Value& a, const Value& b) {
                 auto* sb = static_cast<ObjString*>(b.as.obj);
                 return sa->view() == sb->view();
             }
-            // остальные объекты по ссылке
             return false;
         }
     }
@@ -81,7 +82,6 @@ void VM::loadModule(const std::vector<bc::LoadedFunction>& fns) {
 }
 
 // ---- минимальная VM-layout таблица полей: className -> fieldName -> slotIndex
-// можно вынести в состояние VM, если хочешь сохранить между вызовами.
 static std::unordered_map<std::string, std::unordered_map<std::string, std::size_t>> g_fieldSlots;
 
 static std::size_t getFieldSlot(std::string_view cls, std::string_view field) {
@@ -93,7 +93,7 @@ static std::size_t getFieldSlot(std::string_view cls, std::string_view field) {
     return slot;
 }
 
-// ---- native calls (твои ochev.*)
+// ---- native calls ----
 static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
     auto getArg = [&](uint32_t i) -> const Value& {
         if (i >= argc) throw std::runtime_error("CALL_NATIVE: arg OOB");
@@ -104,7 +104,6 @@ static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
         case 1: { // ochev.Out(x)
             if (argc != 1) throw std::runtime_error("ochev.Out expects 1 arg");
             const Value& v = getArg(0);
-            // минимальный принтер
             if (v.tag == ValueTag::Int) std::cout << v.as.i;
             else if (v.tag == ValueTag::Float) std::cout << v.as.f;
             else if (v.tag == ValueTag::Bool) std::cout << (v.as.b ? "true" : "false");
@@ -123,17 +122,34 @@ static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
             auto* s = mem.heap.allocString(line);
             return Value::object(s);
         }
-        // 3/4/5 можно расширить под твою реальную семантику
         default:
             throw std::runtime_error("Unknown nativeId: " + std::to_string(nativeId));
     }
 }
+
+// Структура для отслеживания состояния VM
+struct VMState {
+    uint64_t instructionsExecuted = 0;
+    uint64_t lastGcAtInstructions = 0;
+    static constexpr uint64_t GC_INSTRUCTION_INTERVAL = 10000;
+    
+    bool shouldRunGC() {
+        return (instructionsExecuted - lastGcAtInstructions) >= GC_INSTRUCTION_INTERVAL;
+    }
+    
+    void recordGC() {
+        lastGcAtInstructions = instructionsExecuted;
+    }
+};
 
 Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
     auto it = fnByName_.find(entryName);
     if (it == fnByName_.end()) throw std::runtime_error("Entry function not found: " + entryName);
     const bc::LoadedFunction* entry = it->second;
 
+    // Инициализируем состояние VM
+    VMState vmState;
+    
     // push entry frame
     mem.pushFrame(&entry->fn, entry->fn.regCount, /*returnPc*/-1, /*returnDst*/255);
 
@@ -144,7 +160,7 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
     }
     for (size_t i = 0; i < args.size(); ++i) mem.reg(static_cast<uint16_t>(i)) = args[i];
 
-    // интерпретатор: всегда исполняем currentFrame()
+    // интерпретатор
     while (!mem.callStack.empty()) {
         Frame& fr = mem.currentFrame();
         const auto& code = fr.fn->code;
@@ -156,6 +172,15 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
         uint32_t w = code[fr.pc];
         bc::Opcode op = bc::decodeOp(w);
+        
+        // Увеличиваем счетчик инструкций
+        vmState.instructionsExecuted++;
+        
+        // Периодический запуск GC (не только по памяти, но и по времени/инструкциям)
+        if (vmState.shouldRunGC()) {
+            mem.collectGarbage();
+            vmState.recordGC();
+        }
 
         switch (op) {
             case bc::Opcode::NOP: {
@@ -344,14 +369,11 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
                 break;
             }
 
-            // GET_FIELD/SET_FIELD: ABC с fieldRefReg (как в твоём компиляторе сейчас)
+            // GET_FIELD/SET_FIELD: ABC с fieldRefReg
             case bc::Opcode::GET_FIELD: {
                 auto d = abc(w);
                 auto* inst = asInstance(mem.reg(d.b));
                 auto* fld = asFieldRef(mem.reg(d.c));
-
-                // (опционально) проверка класса:
-                // if (inst->className->view() != fld->className->view()) ...
 
                 std::size_t slot = getFieldSlot(fld->className->view(), fld->fieldName->view());
                 if (inst->fields.size() <= slot) inst->fields.resize(slot + 1, Value::nil());
@@ -382,17 +404,10 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
                 const bc::LoadedFunction* callee = itf->second;
 
-
-                // подготовим новый фрейм
                 int32_t returnPc = fr.pc + 1;
                 uint8_t returnDst = d.a;
 
                 mem.pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
-
-                // args already in R0..R(argc-1) by convention
-                // caller уже положил их туда (в твоём компиляторе есть placeArgsIntoR0)
-                // поэтому здесь ничего копировать не надо
-
                 break;
             }
 
@@ -436,11 +451,20 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
                 mem.popFrame();
 
                 if (mem.callStack.empty()) {
-                    // возврат из entry
+                    mem.updateStats();
                     return ret;
                 }
 
-                // restore caller pc and place return
+                // if (mem.callStack.empty()) {
+                //     // Выводим статистику GC перед возвратом
+                //     mem.updateStats();
+                //     std::cout << "\n=== VM Statistics ===\n";
+                //     mem.stats.print();
+                //     std::cout << "Instructions executed: " << vmState.instructionsExecuted << "\n";
+                //     std::cout << "=====================\n";
+                //     return ret;
+                // }
+
                 Frame& caller = mem.currentFrame();
                 caller.pc = returnPc;
                 if (returnDst != 255) mem.reg(returnDst) = ret;
@@ -450,9 +474,6 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
             default:
                 throw std::runtime_error("Unknown opcode");
         }
-
-        // место под GC:
-        // if (needGC) { mem.markRoots(); mem.heap.sweep(); }
     }
 
     return Value::nil();
