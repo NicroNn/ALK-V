@@ -134,6 +134,8 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
     std::unordered_map<uint32_t, uint32_t> compilation_candidates;
     std::unordered_map<uint32_t, Func> compiled_blocks;
     compiler::Compiler compiler = compiler::Compiler(mem, g_fieldSlots, fnByName_, true, true);
+    auto* entry_ret_ptr = new Value();
+    uint8_t end_flag = 0;
 
     auto it = fnByName_.find(entryName);
     if (it == fnByName_.end()) throw std::runtime_error("Entry function not found: " + entryName);
@@ -151,11 +153,6 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
     // интерпретатор: всегда исполняем currentFrame()
     while (!mem.callStack.empty()) {
-        auto* ret = new Value();
-        uint8_t end_flag = 0;
-        if (end_flag) {
-            return *ret;
-        }
         Frame& fr = mem.currentFrame();
         const auto& code = fr.fn->code;
 
@@ -315,7 +312,7 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
                             int old_pc = fr.pc;
                             if (!compiled_blocks.contains(fr.pc)) {
                                 std::cout << "compiling at pc " << old_pc << " for " << d.sbx << " bytecode instructions" << std::endl;
-                                compiled_blocks[old_pc] = compiler.create_func(ret, &end_flag, d.sbx);
+                                compiled_blocks[old_pc] = compiler.create_func(entry_ret_ptr, &end_flag, d.sbx);
                             }
                             //std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
                             compiled_blocks[old_pc]();
@@ -484,6 +481,9 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
         // место под GC:
         // if (needGC) { mem.markRoots(); mem.heap.sweep(); }
+    }
+    if (end_flag) {
+        return *entry_ret_ptr;
     }
 
     return Value::nil();

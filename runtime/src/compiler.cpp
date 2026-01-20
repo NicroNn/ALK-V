@@ -110,7 +110,7 @@ namespace alkv::compiler {
         is_error_handling = error_handling;
     }
 
-    Func Compiler::create_func(vm::Value* entry_ret_ptr, uint8_t* end_flag, uint32_t size) {
+    Func Compiler::create_func(vm::Value*& entry_ret_ptr, uint8_t* end_flag, uint32_t size) {
         asmjit::CodeHolder code;
         asmjit::StringLogger logger;
         MyErrorHandler handler;
@@ -153,18 +153,25 @@ namespace alkv::compiler {
 
                 case bc::Opcode::MOV: {
                     auto d = bc::decodeABC(dw);
-                    asmjit::x86::Mem dst_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).as.obj));
-                    asmjit::x86::Mem src_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.b).as.obj));
-                    a.mov(asmjit::x86::rbx, src_ptr);
-                    a.mov(dst_ptr, asmjit::x86::rbx);
+                    asmjit::x86::Mem dst_v_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).as.obj));
+                    asmjit::x86::Mem src_v_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.b).as.obj));
+                    asmjit::x86::Mem dst_t_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).tag));
+                    asmjit::x86::Mem src_t_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.b).tag));
+                    a.mov(asmjit::x86::rbx, src_v_ptr);
+                    a.mov(dst_v_ptr, asmjit::x86::rbx);
+                    a.mov(asmjit::x86::rbx, src_t_ptr);
+                    a.mov(dst_t_ptr, asmjit::x86::rbx);
                     break;
                 }
 
                 case bc::Opcode::LOADK: {
                     auto d = bc::decodeABx(dw);
-                    asmjit::x86::Mem dst_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).as.obj));
+                    asmjit::x86::Mem dst_v_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).as.obj));
+                    asmjit::x86::Mem dst_t_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).tag));
                     asmjit::Imm c = fr.fn->constPool[d.bx].as.obj;
-                    a.mov(dst_ptr, c);
+                    asmjit::Imm t = fr.fn->constPool[d.bx].tag;
+                    a.mov(dst_v_ptr, c);
+                    a.mov(dst_t_ptr, t);
                     break;
                 }
 
@@ -411,7 +418,12 @@ namespace alkv::compiler {
                     asmjit::x86::Mem mem_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem));
                     a.mov(asmjit::x86::rcx, mem_ptr);
                     a.mov(asmjit::x86::rdx, src_ptr);
-                    a.call((void*)allocArrayWrapper);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(allocArrayWrapper);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     a.mov(dst_ptr, asmjit::x86::rax);
                     break;
                 }
@@ -454,7 +466,12 @@ namespace alkv::compiler {
                     asmjit::x86::Mem mem_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem));
                     a.mov(asmjit::x86::rcx, mem_ptr);
                     a.mov(asmjit::x86::rdx, name_ptr);
-                    a.call((void*)allocInstanceWrapper);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(allocInstanceWrapper);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     a.mov(dst_ptr, asmjit::x86::rax);
                     break;
                 }
@@ -469,7 +486,12 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rdx, g_fs_ptr);
                     a.mov(asmjit::x86::rdx, inst_ptr);
                     a.mov(asmjit::x86::r8, fld_ptr);
-                    a.call((void*)getFieldSlotAddress);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(getFieldSlotAddress);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     asmjit::x86::Mem dst_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).as.obj));
                     a.mov(dst_ptr, asmjit::x86::rax);
                     break;
@@ -485,7 +507,12 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rdx, g_fs_ptr);
                     a.mov(asmjit::x86::rdx, inst_ptr);
                     a.mov(asmjit::x86::r8, fld_ptr);
-                    a.call((void*)getFieldSlotAddress);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(getFieldSlotAddress);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     asmjit::x86::Mem src_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.c).as.obj));
                     asmjit::x86::Mem dst_ptr = asmjit::x86::ptr_64(asmjit::x86::rax);
                     a.mov(asmjit::x86::rbx, src_ptr);
@@ -504,7 +531,12 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rdx, mem_ptr);
                     a.mov(asmjit::x86::r8, returnDst);
                     a.mov(asmjit::x86::r9, fref_ptr);
-                    a.call((void*)call_function);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(call_function);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     break;
                 }
 
@@ -519,7 +551,12 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rdx, mem_ptr);
                     a.mov(asmjit::x86::r8, returnDst);
                     a.mov(asmjit::x86::r9, fref_ptr);
-                    a.call((void*)call_function);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(call_function);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     break;
                 }
 
@@ -531,7 +568,12 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rcx, mem_ptr);
                     a.mov(asmjit::x86::rdx, nativeId);
                     a.mov(asmjit::x86::r8, argc);
-                    a.call((void*)callNative);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(callNative);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     asmjit::x86::Mem dst_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem.reg(d.a).as.obj));
                     a.mov(dst_ptr, asmjit::x86::rax);
                     break;
@@ -545,12 +587,12 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rdx, entry_ret_ptr);
                     a.mov(asmjit::x86::r8, end_flag);
                     a.mov(asmjit::x86::r9, d.a);
-                    a.push(asmjit::x86::rbp);
-                    a.mov(asmjit::x86::rbp, asmjit::x86::rsp);
-                    a.and_(asmjit::x86::rsp, 0xFFFF'FFFF'FFFF'FFF0); // aligning
-                    a.call((void*)return_from_function);
-                    a.mov(asmjit::x86::rsp, asmjit::x86::rbp);
-                    a.pop(asmjit::x86::rbp);
+                    a.add(asmjit::x86::rsp, -128);
+                    a.mov(asmjit::x86::r12, asmjit::x86::rsp);
+                    a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
+                    a.call(return_from_function);
+                    a.mov(asmjit::x86::rsp, asmjit::x86::r12);
+                    a.sub(asmjit::x86::rsp, -128);
                     a.cmp(asmjit::x86::ptr_8(reinterpret_cast<uintptr_t>(end_flag)), 1);
                     a.je(instant_ret);
                 }
