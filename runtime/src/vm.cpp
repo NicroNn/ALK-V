@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <iostream>
 #include "alkv/vm/object.hpp"
+#include "alkv/compiler/compiler.hpp"
 
 namespace alkv::vm {
 
@@ -130,6 +131,10 @@ static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
 }
 
 Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
+    std::unordered_map<uint32_t, uint32_t> compilation_candidates;
+    std::unordered_map<uint32_t, Func> compiled_blocks;
+    compiler::Compiler compiler = compiler::Compiler(mem, g_fieldSlots, fnByName_, true, true);
+
     auto it = fnByName_.find(entryName);
     if (it == fnByName_.end()) throw std::runtime_error("Entry function not found: " + entryName);
     const bc::LoadedFunction* entry = it->second;
@@ -156,6 +161,13 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
         uint32_t w = code[fr.pc];
         bc::Opcode op = bc::decodeOp(w);
+        std::cout << "pc = " << fr.pc << std::endl;
+        std::cout << "r[" << 0 << "] = " << mem.reg(0).as.i << std::endl;
+        std::cout << "r[" << 1 << "] = " << mem.reg(1).as.i << std::endl;
+        std::cout << "r[" << 2 << "] = " << mem.reg(2).as.i << std::endl;
+        std::cout << "r[" << 3 << "] = " << mem.reg(3).as.i << std::endl;
+        std::cout << "r[" << 4 << "] = " << mem.reg(4).as.i << std::endl;
+        std::cout << std::endl;
 
         switch (op) {
             case bc::Opcode::NOP: {
@@ -290,7 +302,26 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
             case bc::Opcode::JMP_F: {
                 auto d = asbx(w);
                 bool cond = asBool(mem.reg(d.a));
-                fr.pc = (!cond) ? ((fr.pc + 1) + d.sbx) : (fr.pc + 1);
+                if (cond) {
+                    ++fr.pc;
+                    if (compilation_candidates.contains(fr.pc)) {
+                        ++compilation_candidates[fr.pc];
+                        if (compilation_candidates[fr.pc] > CONST_HOT_PATH_TIMES) {
+                            int old_pc = fr.pc;
+                            if (!compiled_blocks.contains(fr.pc)) {
+                                std::cout << "compiling at pc " << old_pc << " for " << d.sbx << " bytecode instructions" << std::endl;
+                                compiled_blocks[old_pc] = compiler.create_func(d.sbx);
+                            }
+                            std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
+                            compiled_blocks[old_pc]();
+                            std::cout << "after running block pc = " << fr.pc << std::endl;
+                        }
+                    } else {
+                        compilation_candidates[fr.pc] = 1;
+                    }
+                } else {
+                    fr.pc += d.sbx + 1;
+                }
                 break;
             }
 
@@ -398,13 +429,8 @@ Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
 
             case bc::Opcode::CALLK: {
                 auto d = abx(w);
-                if (d.bx >= fr.fn->constPool.size()) throw std::runtime_error("CALLK: const OOB");
-
                 auto* fref = asFuncRef(fr.fn->constPool[d.bx]);
                 auto itf = fnByName_.find(std::string(fref->name->view()));
-                if (itf == fnByName_.end()) {
-                    throw std::runtime_error("CALLK: function not found: " + std::string(fref->name->view()));
-                }
 
                 const bc::LoadedFunction* callee = itf->second;
 

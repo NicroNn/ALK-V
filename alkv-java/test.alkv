@@ -1,5 +1,9 @@
-fnc main : int () {
-    x : int = 10;
-    if (x == 10) { return 1; }
-    return 0;
+fnc main : bool () {
+    x : int = 10609;
+    for (i : int = 2; i * i <= x; i = i + 1) {
+        if (x % i == 0) {
+            return F;
+        }
+    }
+    return T;
 }

@@ -1,0 +1,19 @@
+fnc sieve : bool[] () {
+    n : int = 100000;
+    primes : bool[n];
+
+    for (i in 0...n-1) {
+        primes[i] = T;
+    }
+
+    for (i in 2...n-1) {
+        if (primes[i]) {
+            j : int = i * i;
+            while (j < n) {
+                primes[j] = F;
+                j = j + i;
+            }
+        }
+    }
+    return primes;
+}
