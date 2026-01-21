@@ -178,11 +178,12 @@ fnc factorial : int (n : int) {
     return n * factorial(n - 1);
 }
 
-start : int = ochev.Epoch.Now();
-result : int = factorial(20);
-end : int = ochev.Epoch.Now();
-ochev.Out("Factorial 20: " + result);
-ochev.Out("Time: " + (end - start) + "ms");
+fnc main : int () {
+    start : int = ochev.Epoch.Now();
+    ochev.Out("Factorial 20: " + factorial(20));
+    end : int = ochev.Epoch.Now();
+    ochev.Out("Time: " + (end - start) + "ms");
+}
 ```
 
 ### 7.2 Сортировка пузырьком
@@ -232,11 +233,12 @@ fnc sieve : bool[] (n : int) {
     return primes;
 }
 
-
-start : int = ochev.Epoch.Now();
-result : bool[] = sieve(100000);
-end : int = ochev.Epoch.Now();
-ochev.Out("Time: " + (end - start) + "ms");
+fnc main : int {
+    start : int = ochev.Epoch.Now();
+    result : bool[] = sieve(100000);
+    end : int = ochev.Epoch.Now();
+    ochev.Out("Time: " + (end - start) + "ms");
+}
 ```
 
 ## 8. Архитектура
@@ -262,18 +264,19 @@ ochev.Out("Time: " + (end - start) + "ms");
 ## 9. План разработки
 
 ### Этап 1: Ядро языка
-- [ ] Лексический анализатор
-- [ ] Парсер AST
-- [ ] Базовая система типов
+- [x] Лексический анализатор
+- [x] Парсер AST
+- [x] Базовая система типов
 
 ### Этап 2: Виртуальная машина  
-- [ ] Байткод спецификация
-- [ ] Интерпретатор
-- [ ] Система управления памятью
+- [x] Байткод спецификация
+- [x] Интерпретатор
+- [x] Система управления памятью
 
 ### Этап 3: Оптимизации
-- [ ] JIT-компиляция
-- [ ] Оптимизации GC
+- [x] JIT-компиляция
+- [x] Оптимизации GC
 - [ ] Стандартная библиотека
+
 
 
