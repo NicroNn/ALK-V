@@ -201,15 +201,17 @@ fnc bubbleSort : void (arr : int[], size : int) {
     }
 }
 
-start : int = ochev.Epoch.Now();
-n : int = 10000;
-baseArray : int[n];
-for (i in 0...n) {
-    baseArray[i] = ochev.Chaos.Integer();
+fnc main : int {
+    start : int = ochev.Epoch.Now();
+    n : int = 10000;
+    baseArray : int[n];
+    for (i in 0...n) {
+        baseArray[i] = ochev.Chaos.Integer();
+    }
+    bubbleSort(baseArray, n);
+    end : int = ochev.Epoch.Now();
+    ochev.Out("Time: " + (end - start) + "ms");
 }
-bubbleSort(baseArray, n);
-end : int = ochev.Epoch.Now();
-ochev.Out("Time: " + (end - start) + "ms");
 ```
 
 ### 7.3 Решето Эратосфена
@@ -237,6 +239,51 @@ fnc main : int {
     start : int = ochev.Epoch.Now();
     result : bool[] = sieve(100000);
     end : int = ochev.Epoch.Now();
+    ochev.Out("Time: " + (end - start) + "ms");
+}
+```
+
+### 7.4 Квиксорт
+```
+// Swap: ochev.TudaSyuda(arr[i], arr[j])
+
+fnc partition : int (arr : int[], low : int, high : int) {
+    pivot : int = arr[high];
+    i : int = low - 1;
+    j : int = low;
+
+    while (j < high) {
+        if (arr[j] < pivot) {
+            i = i + 1;
+            ochev.TudaSyuda(arr[i], arr[j]);
+        }
+        j = j + 1;
+    }
+
+    ochev.TudaSyuda(arr[i + 1], arr[high]);
+    return i + 1;
+}
+
+fnc quickSort : void (arr : int[], low : int, high : int) {
+    if (low < high) {
+        p : int = partition(arr, low, high);
+        quickSort(arr, low, p - 1);
+        quickSort(arr, p + 1, high);
+    }
+}
+
+fnc main : int () {
+    n : int = 10000;
+    arr : int[n];
+
+    for (i in 0...n) {
+        arr[i] = ochev.Chaos.Integer();
+    }
+
+    start : int = ochev.Epoch.Now();
+    quickSort(arr, 0, n - 1);
+    end : int = ochev.Epoch.Now();
+
     ochev.Out("Time: " + (end - start) + "ms");
 }
 ```
@@ -276,7 +323,8 @@ fnc main : int {
 ### Этап 3: Оптимизации
 - [x] JIT-компиляция
 - [x] Оптимизации GC
-- [ ] Стандартная библиотека
+- [x] Стандартная библиотека
+
 
 
 
