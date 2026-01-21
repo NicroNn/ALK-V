@@ -245,8 +245,6 @@ fnc main : int {
 
 ### 7.4 Квиксорт
 ```
-// Swap: ochev.TudaSyuda(arr[i], arr[j])
-
 fnc partition : int (arr : int[], low : int, high : int) {
     pivot : int = arr[high];
     i : int = low - 1;
@@ -324,6 +322,7 @@ fnc main : int () {
 - [x] JIT-компиляция
 - [x] Оптимизации GC
 - [x] Стандартная библиотека
+
 
 
 
