@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
             machine.mem.forceGC();
         }
 
-        vm::Value result = machine.run(fnName, {});
+        vm::Value result = machine.run(fnName, {}, true);
         
         if (showStats) {
             machine.mem.updateStats();

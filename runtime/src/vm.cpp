@@ -11,31 +11,31 @@ namespace alkv::vm {
     static ObjArray* asArray(const Value& v) {
         if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::Array)
             throw std::runtime_error("TypeError: expected array");
-        return static_cast<ObjArray*>(v.as.obj);
+        return dynamic_cast<ObjArray*>(v.as.obj);
     }
 
     static ObjInstance* asInstance(const Value& v) {
         if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::Instance)
             throw std::runtime_error("TypeError: expected object instance");
-        return static_cast<ObjInstance*>(v.as.obj);
+        return dynamic_cast<ObjInstance*>(v.as.obj);
     }
 
     static ObjFuncRef* asFuncRef(const Value& v) {
         if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::FuncRef)
             throw std::runtime_error("TypeError: expected func ref");
-        return static_cast<ObjFuncRef*>(v.as.obj);
+        return dynamic_cast<ObjFuncRef*>(v.as.obj);
     }
 
     static ObjClassRef* asClassRef(const Value& v) {
         if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::ClassRef)
             throw std::runtime_error("TypeError: expected class ref");
-        return static_cast<ObjClassRef*>(v.as.obj);
+        return dynamic_cast<ObjClassRef*>(v.as.obj);
     }
 
     static ObjFieldRef* asFieldRef(const Value& v) {
         if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::FieldRef)
             throw std::runtime_error("TypeError: expected field ref");
-        return static_cast<ObjFieldRef*>(v.as.obj);
+        return dynamic_cast<ObjFieldRef*>(v.as.obj);
     }
 
     static bool valueEquals(const Value& a, const Value& b) {
@@ -235,7 +235,7 @@ namespace alkv::vm {
         }
     };
 
-    Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
+    Value VM::run(const std::string& entryName, const std::vector<Value>& args, bool is_compiling) {
         std::unordered_map<uint32_t, uint32_t> compilation_candidates;
         std::unordered_map<uint32_t, Func> compiled_blocks;
         compiler::Compiler compiler = compiler::Compiler(mem, g_fieldSlots, fnByName_, true, true);
@@ -414,25 +414,29 @@ namespace alkv::vm {
                 case bc::Opcode::JMP_F: {
                     auto d = asbx(w);
                     bool cond = asBool(mem.reg(d.a));
-                    if (cond) {
-                        ++fr.pc;
-                        if (compilation_candidates.contains(fr.pc)) {
-                            ++compilation_candidates[fr.pc];
-                            if (compilation_candidates[fr.pc] > CONST_HOT_PATH_TIMES) {
-                                int old_pc = fr.pc;
-                                if (!compiled_blocks.contains(fr.pc)) {
-                                    std::cout << "compiling at pc " << old_pc << " for " << d.sbx << " bytecode instructions" << std::endl;
-                                    compiled_blocks[old_pc] = compiler.create_func(entry_ret_ptr, &end_flag, d.sbx);
+                    if (is_compiling) {
+                        if (cond) {
+                            ++fr.pc;
+                            if (compilation_candidates.contains(fr.pc)) {
+                                ++compilation_candidates[fr.pc];
+                                if (compilation_candidates[fr.pc] > CONST_HOT_PATH_TIMES) {
+                                    int old_pc = fr.pc;
+                                    if (!compiled_blocks.contains(fr.pc)) {
+                                        std::cout << "compiling at pc " << old_pc << " for " << d.sbx << " bytecode instructions" << std::endl;
+                                        compiled_blocks[old_pc] = compiler.create_func(entry_ret_ptr, &end_flag, d.sbx);
+                                    }
+                                    //std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
+                                    compiled_blocks[old_pc]();
+                                    //std::cout << "after running block pc = " << fr.pc << std::endl;
                                 }
-                                //std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
-                                compiled_blocks[old_pc]();
-                                //std::cout << "after running block pc = " << fr.pc << std::endl;
+                            } else {
+                                compilation_candidates[fr.pc] = 1;
                             }
                         } else {
-                            compilation_candidates[fr.pc] = 1;
+                            fr.pc += d.sbx + 1;
                         }
                     } else {
-                        fr.pc += d.sbx + 1;
+                        fr.pc = (!cond) ? ((fr.pc + 1) + d.sbx) : (fr.pc + 1);
                     }
                     break;
                 }

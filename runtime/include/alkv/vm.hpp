@@ -16,7 +16,7 @@ public:
     void loadModule(const std::vector<bc::LoadedFunction>& fns);
 
     // entry run (с поддержкой CALLK)
-    Value run(const std::string& entryName, const std::vector<Value>& args);
+    Value run(const std::string& entryName, const std::vector<Value>& args, bool is_compiling);
 
 private:
     std::unordered_map<std::string, const bc::LoadedFunction*> fnByName_;

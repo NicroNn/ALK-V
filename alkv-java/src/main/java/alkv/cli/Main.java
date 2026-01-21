@@ -1,6 +1,5 @@
 package alkv.cli;
 
-import alkv.ast.Program;
 import alkv.bytecode.ModuleCompiler;
 import alkv.io.AlkbWriter;
 import alkv.lexer.Lexer;

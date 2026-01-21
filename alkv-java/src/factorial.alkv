@@ -1,9 +1,10 @@
-fnc main : int () {
-    result : int = 1;
-
-    for (i in 1...6) {
-        result = result * i;
+fnc factorial : int (n : int) {
+    if (n == 0) {
+        return 1;
     }
+    return n * factorial(n - 1);
+}
 
-    return result;
+fnc main : int () {
+    return factorial(20);
 }

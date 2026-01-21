@@ -62,8 +62,8 @@ struct ObjArray final : Obj {
     }
     
     static ObjArray* create(std::size_t n) {
-        void* mem = ::operator new(sizeof(ObjArray), std::align_val_t(alignof(ObjArray)));
-        return new (mem) ObjArray(n);
+        auto* p = reinterpret_cast<ObjArray*>(operator new(sizeof(ObjArray)));
+        return new(p) ObjArray(n);;
     }
 };
 
