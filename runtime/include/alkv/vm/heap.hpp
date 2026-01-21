@@ -217,12 +217,7 @@ private:
                 ::operator delete((void*)s, std::align_val_t(alignof(ObjString)));
                 break;
             }
-            case ObjType::Array: {
-                auto* a = static_cast<ObjArray*>(o);
-                a->~ObjArray();
-                ::operator delete((void*)a, std::align_val_t(alignof(ObjArray)));
-                break;
-            }
+
             case ObjType::Instance: {
                 auto* i = static_cast<ObjInstance*>(o);
                 i->~ObjInstance();

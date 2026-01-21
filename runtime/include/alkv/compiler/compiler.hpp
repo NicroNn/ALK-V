@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <cmath>
 
 typedef void (*Func)();
 typedef std::unordered_map<std::string, std::unordered_map<std::string, std::size_t>> g_fs_T;

@@ -329,6 +329,12 @@ public final class SingleFunctionCompiler {
             return r;
         }
 
+        if (e instanceof FloatLiteral lit) {
+            int r = allocReg();
+            out.emitABx(LOADK, r, consts.add(new ConstPool.KFloat(lit.value())));
+            return r;
+        }
+
         if (e instanceof StringLiteral lit) {
             int r = allocReg();
             out.emitABx(LOADK, r, consts.add(new ConstPool.KString(lit.value())));

@@ -420,6 +420,7 @@ public final class Parser {
             return parseArrayLiteral();
         }
         if (match(TokenType.INT_LITERAL)) return new IntLiteral(Integer.parseInt(previous().lexeme()));
+        if (match(TokenType.FLOAT_LITERAL)) return new FloatLiteral(Float.parseFloat(previous().lexeme()));
         if (match(TokenType.STRING_LITERAL)) return new StringLiteral(previous().lexeme());
         if (match(TokenType.BOOL_LITERAL)) return new BoolLiteral("T".equals(previous().lexeme()));
         if (match(TokenType.IDENTIFIER)) return new VarExpr(previous().lexeme());

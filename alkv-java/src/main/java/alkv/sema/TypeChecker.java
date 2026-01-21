@@ -194,6 +194,7 @@ public final class TypeChecker {
         Type t;
         switch (e) {
             case IntLiteral ignored -> t = PrimitiveType.INT;
+            case FloatLiteral ignored -> t = PrimitiveType.FLOAT;
             case StringLiteral ignored -> t = PrimitiveType.STRING;
             case BoolLiteral ignored -> t = PrimitiveType.BOOL;
 
