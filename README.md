@@ -236,10 +236,10 @@ fnc sieve : bool[] (n : int) {
 }
 
 fnc main : int {
-    start : int = ochev.Epoch.Now();
     result : bool[] = sieve(100000);
-    end : int = ochev.Epoch.Now();
-    ochev.Out("Time: " + (end - start) + "ms");
+    for (i in 0...100000) {
+        ochev.Out(i);
+    }
 }
 ```
 
@@ -322,6 +322,7 @@ fnc main : int () {
 - [x] JIT-компиляция
 - [x] Оптимизации GC
 - [ ] Стандартная библиотека
+
 
 
 
