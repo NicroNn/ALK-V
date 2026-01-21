@@ -93,11 +93,50 @@ static std::size_t getFieldSlot(std::string_view cls, std::string_view field) {
     return slot;
 }
 
-// ---- native calls ----
 static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
     auto getArg = [&](uint32_t i) -> const Value& {
         if (i >= argc) throw std::runtime_error("CALL_NATIVE: arg OOB");
         return mem.reg(static_cast<uint16_t>(i));
+    };
+
+    auto asIntLocal = [&](const Value& v) -> int32_t {
+        if (v.tag != ValueTag::Int) throw std::runtime_error("TypeError: expected int");
+        return v.as.i;
+    };
+    auto asFloatLocal = [&](const Value& v) -> float {
+        if (v.tag != ValueTag::Float) throw std::runtime_error("TypeError: expected float");
+        return v.as.f;
+    };
+
+    auto numericMax = [&](const Value& a, const Value& b) -> Value {
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Int) {
+            return Value::i32(std::max(a.as.i, b.as.i));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Float) {
+            return Value::f32(std::max(a.as.f, b.as.f));
+        }
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Float) {
+            return Value::f32(std::max(static_cast<float>(a.as.i), b.as.f));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Int) {
+            return Value::f32(std::max(a.as.f, static_cast<float>(b.as.i)));
+        }
+        throw std::runtime_error("TypeError: max expects (int|float, int|float)");
+    };
+    auto numericMin = [&](const Value& a, const Value& b) -> Value {
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Int) {
+            return Value::i32(std::min(a.as.i, b.as.i));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Float) {
+            return Value::f32(std::min(a.as.f, b.as.f));
+        }
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Float) {
+            return Value::f32(std::min(static_cast<float>(a.as.i), b.as.f));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Int) {
+            return Value::f32(std::min(a.as.f, static_cast<float>(b.as.i)));
+        }
+        throw std::runtime_error("TypeError: min expects (int|float, int|float)");
     };
 
     switch (nativeId) {
@@ -115,6 +154,7 @@ static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
             std::cout << "\n";
             return Value::nil();
         }
+
         case 2: { // ochev.In() -> string
             if (argc != 0) throw std::runtime_error("ochev.In expects 0 args");
             std::string line;
@@ -122,6 +162,49 @@ static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
             auto* s = mem.heap.allocString(line);
             return Value::object(s);
         }
+
+        case 3: { // ochev.TudaSyuda(...)
+            // Вариант A: (arr, i, j)
+            if (argc == 3) {
+                ObjArray* arr = asArray(getArg(0));
+                int32_t i = asIntLocal(getArg(1));
+                int32_t j = asIntLocal(getArg(2));
+                if (i < 0 || j < 0 ||
+                    i >= static_cast<int32_t>(arr->elems.size()) ||
+                    j >= static_cast<int32_t>(arr->elems.size())) {
+                    throw std::runtime_error("ochev.TudaSyuda: index OOB");
+                }
+                std::swap(arr->elems[static_cast<std::size_t>(i)],
+                          arr->elems[static_cast<std::size_t>(j)]);
+                return Value::nil();
+            }
+            // Вариант B: (arr1, i1, arr2, i2)
+            if (argc == 4) {
+                ObjArray* a1 = asArray(getArg(0));
+                int32_t i1 = asIntLocal(getArg(1));
+                ObjArray* a2 = asArray(getArg(2));
+                int32_t i2 = asIntLocal(getArg(3));
+                if (i1 < 0 || i1 >= static_cast<int32_t>(a1->elems.size()) ||
+                    i2 < 0 || i2 >= static_cast<int32_t>(a2->elems.size())) {
+                    throw std::runtime_error("ochev.TudaSyuda: index OOB");
+                }
+                std::swap(a1->elems[static_cast<std::size_t>(i1)],
+                          a2->elems[static_cast<std::size_t>(i2)]);
+                return Value::nil();
+            }
+            throw std::runtime_error("ochev.TudaSyuda expects 3 args (arr,i,j) or 4 args (arr1,i1,arr2,i2)");
+        }
+
+        case 4: { // ochev.>>>(a, b) -> max
+            if (argc != 2) throw std::runtime_error("ochev.>>> expects 2 args");
+            return numericMax(getArg(0), getArg(1));
+        }
+
+        case 5: { // ochev.<<<(a, b) -> min
+            if (argc != 2) throw std::runtime_error("ochev.<<< expects 2 args");
+            return numericMin(getArg(0), getArg(1));
+        }
+
         default:
             throw std::runtime_error("Unknown nativeId: " + std::to_string(nativeId));
     }
