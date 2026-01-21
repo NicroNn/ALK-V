@@ -1,15 +1,19 @@
+// alkv/bytecode/loader.cpp
 #include "alkv/bytecode/loader.hpp"
+
 #include <fstream>
 #include <stdexcept>
 #include <vector>
 #include <cstring>
 #include <algorithm>
+#include <string>
+#include <cstdint>
 
 namespace alkv::bc {
 
-// --------------------
+// ============================================================================
 // Low-level BE readers
-// --------------------
+// ============================================================================
 static void readExact(std::istream& in, void* dst, std::size_t n) {
     in.read(reinterpret_cast<char*>(dst), static_cast<std::streamsize>(n));
     if (in.gcount() != static_cast<std::streamsize>(n)) {
@@ -62,6 +66,15 @@ static void expectTag(std::istream& in, char a, char b) {
     }
 }
 
+// v1: u16 length; v2+: u32 length
+static uint32_t readLen(std::istream& in, uint16_t version) {
+    if (version >= 2) return readU32BE(in);
+    return uint32_t(readU16BE(in));
+}
+
+// ============================================================================
+// Helper: infer reg count for legacy files (CD only)
+// ============================================================================
 static uint32_t inferRegCountFromCode(const std::vector<uint32_t>& code) {
     uint32_t maxReg = 0;
     bool any = false;
@@ -74,14 +87,12 @@ static uint32_t inferRegCountFromCode(const std::vector<uint32_t>& code) {
 
     for (uint32_t w : code) {
         auto op = decodeOp(w);
-
         switch (op) {
             case Opcode::LOADK: {
                 auto d = decodeABx(w);
                 consider(d.a);
                 break;
             }
-
             case Opcode::NEW_OBJ:
             case Opcode::CALLK: {
                 auto d = decodeABx(w);
@@ -92,9 +103,9 @@ static uint32_t inferRegCountFromCode(const std::vector<uint32_t>& code) {
             case Opcode::MOV:
             case Opcode::ADD_I: case Opcode::SUB_I: case Opcode::MUL_I: case Opcode::DIV_I: case Opcode::MOD_I:
             case Opcode::ADD_F: case Opcode::SUB_F: case Opcode::MUL_F: case Opcode::DIV_F: case Opcode::MOD_F:
-            case Opcode::LT_I: case Opcode::LE_I: case Opcode::GT_I: case Opcode::GE_I:
-            case Opcode::LT_F: case Opcode::LE_F: case Opcode::GT_F: case Opcode::GE_F:
-            case Opcode::EQ: case Opcode::NE:
+            case Opcode::LT_I:  case Opcode::LE_I:  case Opcode::GT_I:  case Opcode::GE_I:
+            case Opcode::LT_F:  case Opcode::LE_F:  case Opcode::GT_F:  case Opcode::GE_F:
+            case Opcode::EQ:    case Opcode::NE:
             case Opcode::NOT:
             case Opcode::I2F:
             case Opcode::NEW_ARR:
@@ -131,9 +142,9 @@ static uint32_t inferRegCountFromCode(const std::vector<uint32_t>& code) {
     return any ? (maxReg + 1) : 0;
 }
 
-// --------------------
+// ============================================================================
 // Legacy: ALKB + CD only
-// --------------------
+// ============================================================================
 Function loadLegacySingleCodeFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) throw std::runtime_error("ALKB loader: cannot open file: " + path);
@@ -145,10 +156,13 @@ Function loadLegacySingleCodeFile(const std::string& path) {
     }
 
     uint16_t version = readU16BE(in);
-    if (version != 1) throw std::runtime_error("ALKB loader: unsupported version");
+    if (version != 1 && version != 2) {
+        throw std::runtime_error("ALKB loader: unsupported version");
+    }
 
-    // Legacy writer пишет сразу CD
+    // Legacy writer writes only CD after header
     expectTag(in, 'C', 'D');
+
     uint32_t sizeBytes = readU32BE(in);
     if (sizeBytes % 4 != 0) throw std::runtime_error("ALKB loader: CD size not multiple of 4");
 
@@ -162,97 +176,103 @@ Function loadLegacySingleCodeFile(const std::string& path) {
     }
 
     fn.regCount = static_cast<uint16_t>(std::min<uint32_t>(inferRegCountFromCode(fn.code), 65535));
-    // constPool пустой (в legacy формате CP не пишется)
+    // constPool is empty in legacy format
     return fn;
 }
 
-// --------------------
+// ============================================================================
 // Module format: FN + functions
-// --------------------
-static LoadedFunction readOneFunction(std::istream& in, alkv::vm::Heap& heap) {
+// ============================================================================
+static LoadedFunction readOneFunction(std::istream& in, alkv::vm::Heap& heap, uint16_t version) {
     LoadedFunction out;
 
-    // FH
+    // ---- FH ----
     expectTag(in, 'F', 'H');
     uint32_t fhSize = readU32BE(in);
-    (void)fhSize; // размер нам не особо нужен, но он есть
 
     uint16_t nameLen = readU16BE(in);
     out.name = readBytesAsString(in, nameLen);
     out.numParams = readU32BE(in);
+
     uint32_t numRegs = readU32BE(in);
     if (numRegs > 65535) throw std::runtime_error("ALKB loader: regCount too large");
     out.fn.regCount = static_cast<uint16_t>(numRegs);
 
-    // CP
+    // Sanity check FH payload size
+    uint32_t fhPayloadRead = 2u + uint32_t(nameLen) + 4u + 4u;
+    if (fhPayloadRead != fhSize) {
+        throw std::runtime_error("ALKB loader: FH size mismatch (writer/loader format mismatch)");
+    }
+
+    // ---- CP ----
     expectTag(in, 'C', 'P');
     uint32_t cpSize = readU32BE(in);
-    (void)cpSize;
 
-    uint32_t nConsts = readU32BE(in);
+    uint32_t cpRead = 0;
+    uint32_t nConsts = readU32BE(in); cpRead += 4;
     out.fn.constPool.reserve(nConsts);
 
     for (uint32_t i = 0; i < nConsts; ++i) {
-        // ... внутри readOneFunction CP loop:
-        uint8_t type = readU8(in);
+        uint8_t type = readU8(in); cpRead += 1;
+
         switch (type) {
             case 0: { // int
-                int32_t v = readI32BE(in);
+                int32_t v = readI32BE(in); cpRead += 4;
                 out.fn.constPool.push_back(alkv::vm::Value::i32(v));
                 break;
             }
             case 1: { // float
-                float v = readF32BE(in);
+                float v = readF32BE(in); cpRead += 4;
                 out.fn.constPool.push_back(alkv::vm::Value::f32(v));
                 break;
             }
             case 2: { // bool
-                uint8_t b = readU8(in);
+                uint8_t b = readU8(in); cpRead += 1;
                 out.fn.constPool.push_back(alkv::vm::Value::boolean(b != 0));
                 break;
             }
-            case 3: { // string
-                uint32_t len = readU32BE(in);
-                std::string s = readBytesAsString(in, len);
+            case 3: { // string: [u32 len][bytes]
+                uint32_t len = readU32BE(in); cpRead += 4;
+                std::string s = readBytesAsString(in, len); cpRead += len;
                 auto* obj = heap.allocString(std::string_view(s.data(), s.size()));
                 out.fn.constPool.push_back(alkv::vm::Value::object(obj));
                 break;
             }
-            case 4: { // func
-                uint16_t nlen = readU16BE(in);
-                std::string name = readBytesAsString(in, nlen);
-                uint32_t arity = readU32BE(in);
+            case 4: { // func: [len][name][u32 arity]
+                uint32_t nlen = readLen(in, version); cpRead += (version >= 2 ? 4u : 2u);
+                std::string name = readBytesAsString(in, nlen); cpRead += nlen;
+                uint32_t arity = readU32BE(in); cpRead += 4;
                 auto* nm = heap.allocString(name);
                 auto* fr = heap.allocFuncRef(nm, arity);
                 out.fn.constPool.push_back(alkv::vm::Value::object(fr));
                 break;
             }
-            case 5: { // class
-                uint16_t nlen = readU16BE(in);
-                std::string name = readBytesAsString(in, nlen);
+            case 5: { // class: [len][name]
+                uint32_t nlen = readLen(in, version); cpRead += (version >= 2 ? 4u : 2u);
+                std::string name = readBytesAsString(in, nlen); cpRead += nlen;
                 auto* nm = heap.allocString(name);
                 auto* cr = heap.allocClassRef(nm);
                 out.fn.constPool.push_back(alkv::vm::Value::object(cr));
                 break;
             }
-            case 6: { // field
-                uint16_t clen = readU16BE(in);
-                std::string cls = readBytesAsString(in, clen);
-                uint16_t flen = readU16BE(in);
-                std::string fld = readBytesAsString(in, flen);
+            case 6: { // field: [len][cls][len][field]
+                uint32_t clen = readLen(in, version); cpRead += (version >= 2 ? 4u : 2u);
+                std::string cls = readBytesAsString(in, clen); cpRead += clen;
+                uint32_t flen = readLen(in, version); cpRead += (version >= 2 ? 4u : 2u);
+                std::string fld = readBytesAsString(in, flen); cpRead += flen;
                 auto* c = heap.allocString(cls);
                 auto* f = heap.allocString(fld);
                 auto* fr = heap.allocFieldRef(c, f);
                 out.fn.constPool.push_back(alkv::vm::Value::object(fr));
                 break;
             }
-            case 7: { // method (если тебе нужно отдельно)
-                uint16_t clen = readU16BE(in);
-                std::string cls = readBytesAsString(in, clen);
-                uint16_t mlen = readU16BE(in);
-                std::string m = readBytesAsString(in, mlen);
-                uint32_t arity = readU32BE(in);
-                // В рантайме проще хранить как FuncRef с already-mangled именем:
+            case 7: { // method: [len][cls][len][method][u32 arity] -> store as mangled FuncRef
+                uint32_t clen = readLen(in, version); cpRead += (version >= 2 ? 4u : 2u);
+                std::string cls = readBytesAsString(in, clen); cpRead += clen;
+                uint32_t mlen = readLen(in, version); cpRead += (version >= 2 ? 4u : 2u);
+                std::string m = readBytesAsString(in, mlen); cpRead += mlen;
+                uint32_t arity = readU32BE(in); cpRead += 4;
+
                 std::string mangled = cls + "." + m;
                 auto* nm = heap.allocString(mangled);
                 auto* fr = heap.allocFuncRef(nm, arity);
@@ -264,7 +284,11 @@ static LoadedFunction readOneFunction(std::istream& in, alkv::vm::Heap& heap) {
         }
     }
 
-    // CD
+    if (cpRead != cpSize) {
+        throw std::runtime_error("ALKB loader: CP size mismatch (writer/loader format mismatch)");
+    }
+
+    // ---- CD ----
     expectTag(in, 'C', 'D');
     uint32_t cdSize = readU32BE(in);
     if (cdSize % 4 != 0) throw std::runtime_error("ALKB loader: CD size not multiple of 4");
@@ -290,17 +314,18 @@ std::vector<LoadedFunction> loadModuleFromFile(const std::string& path, alkv::vm
     }
 
     uint16_t version = readU16BE(in);
-    if (version != 1) throw std::runtime_error("ALKB loader: unsupported version");
+    if (version != 1 && version != 2) {
+        throw std::runtime_error("ALKB loader: unsupported version");
+    }
 
-    // Далее может быть либо FN (модуль), либо CD (legacy)
+    // Next can be either FN (module) or CD (legacy)
     char tag[2];
     readExact(in, tag, 2);
 
     if (tag[0] == 'C' && tag[1] == 'D') {
-        // legacy: откатываемся на 2 байта назад не будем — проще переоткрыть и вызвать legacy loader
-        // (либо можно хранить буфер, но так проще)
+        // legacy: easiest is reopen and call legacy loader
         in.close();
-        // Вернём "модуль" из одной анонимной функции
+
         LoadedFunction lf;
         lf.name = "main";
         lf.numParams = 0;
@@ -317,7 +342,7 @@ std::vector<LoadedFunction> loadModuleFromFile(const std::string& path, alkv::vm
     fns.reserve(numFunctions);
 
     for (uint32_t i = 0; i < numFunctions; ++i) {
-        fns.push_back(readOneFunction(in, heap));
+        fns.push_back(readOneFunction(in, heap, version));
     }
 
     return fns;

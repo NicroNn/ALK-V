@@ -26,21 +26,24 @@ uintptr_t getFieldSlotAddress(g_fs_T* g_fs,
 }
 
 void call_function(fnByN_T* fnByN, vm::VMMemory* mem,
-                   uint8_t returnDst, vm::ObjFuncRef* fref) {
+                   uint8_t returnDst, vm::ObjFuncRef* fref, uint32_t argc) {
     auto itf = (*fnByN).find(std::string(fref->name->view()));
     if (itf == (*fnByN).end()) throw std::runtime_error("CALL: unknown function");
-
     const bc::LoadedFunction* callee = itf->second;
 
+    // сохранить аргументы из caller R0..R(argc-1)
+    std::vector<vm::Value> argv;
+    argv.reserve(argc);
+    for (uint32_t i = 0; i < argc; ++i) argv.push_back(mem->reg(static_cast<uint16_t>(i)));
 
-    // подготовим новый фрейм
     int32_t returnPc = mem->currentFrame().pc + 1;
 
     mem->pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
 
-    // args already in R0..R(argc-1) by convention
-    // caller уже положил их туда (в твоём компиляторе есть placeArgsIntoR0)
-    // поэтому здесь ничего копировать не надо
+    if (argc > callee->fn.regCount) {
+        throw std::runtime_error("CALL: too many args for callee regCount");
+    }
+    for (uint32_t i = 0; i < argc; ++i) mem->reg(static_cast<uint16_t>(i)) = argv[i];
 }
 
 void return_from_function(vm::VMMemory* mem, vm::Value* entry_ret_ptr, uint8_t* end_flag, uint8_t r) {
@@ -55,6 +58,7 @@ void return_from_function(vm::VMMemory* mem, vm::Value* entry_ret_ptr, uint8_t* 
 
     if (mem->callStack.empty()) { // ?????
         // возврат из entry
+        mem->updateStats();
         *entry_ret_ptr = ret;
         *end_flag = 1;
         return;
@@ -67,35 +71,127 @@ void return_from_function(vm::VMMemory* mem, vm::Value* entry_ret_ptr, uint8_t* 
 }
 
 vm::Value callNative(vm::VMMemory* mem, uint32_t nativeId, uint32_t argc) {
-    auto getArg = [&](uint32_t i) -> const vm::Value& {
+    using namespace vm;
+    auto getArg = [&](uint32_t i) -> const Value& {
         if (i >= argc) throw std::runtime_error("CALL_NATIVE: arg OOB");
         return mem->reg(static_cast<uint16_t>(i));
+    };
+    auto asIntLocal = [&](const Value& v) -> int32_t {
+        if (v.tag != ValueTag::Int) throw std::runtime_error("TypeError: expected int");
+        return v.as.i;
+    };
+    auto asFloatLocal = [&](const Value& v) -> float {
+        if (v.tag != ValueTag::Float) throw std::runtime_error("TypeError: expected float");
+        return v.as.f;
+    };
+
+    auto numericMax = [&](const Value& a, const Value& b) -> Value {
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Int) {
+            return Value::i32(std::max(a.as.i, b.as.i));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Float) {
+            return Value::f32(std::max(a.as.f, b.as.f));
+        }
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Float) {
+            return Value::f32(std::max(static_cast<float>(a.as.i), b.as.f));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Int) {
+            return Value::f32(std::max(a.as.f, static_cast<float>(b.as.i)));
+        }
+        throw std::runtime_error("TypeError: max expects (int|float, int|float)");
+    };
+    auto numericMin = [&](const Value& a, const Value& b) -> Value {
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Int) {
+            return Value::i32(std::min(a.as.i, b.as.i));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Float) {
+            return Value::f32(std::min(a.as.f, b.as.f));
+        }
+        if (a.tag == ValueTag::Int && b.tag == ValueTag::Float) {
+            return Value::f32(std::min(static_cast<float>(a.as.i), b.as.f));
+        }
+        if (a.tag == ValueTag::Float && b.tag == ValueTag::Int) {
+            return Value::f32(std::min(a.as.f, static_cast<float>(b.as.i)));
+        }
+        throw std::runtime_error("TypeError: min expects (int|float, int|float)");
     };
 
     switch (nativeId) {
         case 1: { // ochev.Out(x)
             if (argc != 1) throw std::runtime_error("ochev.Out expects 1 arg");
-            const vm::Value& v = getArg(0);
-            // минимальный принтер
-            if (v.tag == vm::ValueTag::Int) std::cout << v.as.i;
-            else if (v.tag == vm::ValueTag::Float) std::cout << v.as.f;
-            else if (v.tag == vm::ValueTag::Bool) std::cout << (v.as.b ? "true" : "false");
-            else if (v.tag == vm::ValueTag::Nil) std::cout << "nil";
-            else if (v.tag == vm::ValueTag::Obj && v.as.obj && v.as.obj->type == vm::ObjType::String)
-                std::cout << static_cast<vm::ObjString*>(v.as.obj)->view();
+            const Value& v = getArg(0);
+            if (v.tag == ValueTag::Int) std::cout << v.as.i;
+            else if (v.tag == ValueTag::Float) std::cout << v.as.f;
+            else if (v.tag == ValueTag::Bool) std::cout << (v.as.b ? "true" : "false");
+            else if (v.tag == ValueTag::Nil) std::cout << "nil";
+            else if (v.tag == ValueTag::Obj && v.as.obj && v.as.obj->type == ObjType::String)
+                std::cout << static_cast<ObjString*>(v.as.obj)->view();
             else
                 std::cout << "<obj>";
             std::cout << "\n";
-            return vm::Value::nil();
+            return Value::nil();
         }
+
         case 2: { // ochev.In() -> string
             if (argc != 0) throw std::runtime_error("ochev.In expects 0 args");
             std::string line;
             std::getline(std::cin, line);
             auto* s = mem->heap.allocString(line);
-            return vm::Value::object(s);
+            return Value::object(s);
         }
-            // 3/4/5 можно расширить под твою реальную семантику
+
+        case 3: { // ochev.TudaSyuda(...)
+            // Вариант A: (arr, i, j)
+            if (argc == 3) {
+                ObjArray* arr = static_cast<ObjArray*>(getArg(0).as.obj);
+                int32_t i = asIntLocal(getArg(1));
+                int32_t j = asIntLocal(getArg(2));
+                if (i < 0 || j < 0 ||
+                    i >= static_cast<int32_t>(arr->elems.size()) ||
+                    j >= static_cast<int32_t>(arr->elems.size())) {
+                    throw std::runtime_error("ochev.TudaSyuda: index OOB");
+                }
+                Value* e1 = &arr->elems[static_cast<std::size_t>(i)];
+                Value* e2 = &arr->elems[static_cast<std::size_t>(j)];
+                auto* temp = new Value();
+                *temp = *e2;
+                *e2 = *e1;
+                *e1 = *temp;
+                delete temp;
+                return Value::nil();
+            }
+            // Вариант B: (arr1, i1, arr2, i2)
+            if (argc == 4) {
+                ObjArray* a1 = static_cast<ObjArray*>(getArg(0).as.obj);
+                int32_t i1 = asIntLocal(getArg(1));
+                ObjArray* a2 = static_cast<ObjArray*>(getArg(2).as.obj);
+                int32_t i2 = asIntLocal(getArg(3));
+                if (i1 < 0 || i1 >= static_cast<int32_t>(a1->elems.size()) ||
+                    i2 < 0 || i2 >= static_cast<int32_t>(a2->elems.size())) {
+                    throw std::runtime_error("ochev.TudaSyuda: index OOB");
+                }
+                Value* e1 = &a1->elems[static_cast<std::size_t>(i1)];
+                Value* e2 = &a2->elems[static_cast<std::size_t>(i2)];
+                auto* temp = new Value();
+                *temp = *e2;
+                *e2 = *e1;
+                *e1 = *temp;
+                delete temp;
+                return Value::nil();
+            }
+            throw std::runtime_error("ochev.TudaSyuda expects 3 args (arr,i,j) or 4 args (arr1,i1,arr2,i2)");
+        }
+
+        case 4: { // ochev.>>>(a, b) -> max
+            if (argc != 2) throw std::runtime_error("ochev.>>> expects 2 args");
+            return numericMax(getArg(0), getArg(1));
+        }
+
+        case 5: { // ochev.<<<(a, b) -> min
+            if (argc != 2) throw std::runtime_error("ochev.<<< expects 2 args");
+            return numericMin(getArg(0), getArg(1));
+        }
+
         default:
             throw std::runtime_error("Unknown nativeId: " + std::to_string(nativeId));
     }
@@ -524,6 +620,7 @@ namespace alkv::compiler {
                     auto d = bc::decodeABC(dw);
                     auto* fref = static_cast<vm::ObjFuncRef*>(mem.reg(d.b).as.obj);
                     uint8_t returnDst = d.a;
+                    uint32_t argc = d.c;
                     asmjit::x86::Mem fref_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(fref));
                     asmjit::x86::Mem fnByN_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&fnByName_));
                     asmjit::x86::Mem mem_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem));
@@ -531,12 +628,14 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rdx, mem_ptr);
                     a.mov(asmjit::x86::r8, returnDst);
                     a.mov(asmjit::x86::r9, fref_ptr);
+                    a.push(argc);
                     a.add(asmjit::x86::rsp, -128);
                     a.mov(asmjit::x86::r12, asmjit::x86::rsp);
                     a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
                     a.call(call_function);
                     a.mov(asmjit::x86::rsp, asmjit::x86::r12);
                     a.sub(asmjit::x86::rsp, -128);
+                    a.add(asmjit::x86::rsp, 8);
                     break;
                 }
 
@@ -544,6 +643,7 @@ namespace alkv::compiler {
                     auto d = bc::decodeABx(dw);
                     auto* fref = static_cast<vm::ObjFuncRef*>(fr.fn->constPool[d.bx].as.obj);
                     uint8_t returnDst = d.a;
+                    uint32_t argc = fref->arity;
                     asmjit::x86::Mem fref_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(fref));
                     asmjit::x86::Mem fnByN_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&fnByName_));
                     asmjit::x86::Mem mem_ptr = asmjit::x86::ptr_64(reinterpret_cast<uintptr_t>(&mem));
@@ -551,12 +651,14 @@ namespace alkv::compiler {
                     a.mov(asmjit::x86::rdx, mem_ptr);
                     a.mov(asmjit::x86::r8, returnDst);
                     a.mov(asmjit::x86::r9, fref_ptr);
+                    a.push(argc);
                     a.add(asmjit::x86::rsp, -128);
                     a.mov(asmjit::x86::r12, asmjit::x86::rsp);
                     a.and_(asmjit::x86::rsp, -16); // aligning before c++ function call
                     a.call(call_function);
                     a.mov(asmjit::x86::rsp, asmjit::x86::r12);
                     a.sub(asmjit::x86::rsp, -128);
+                    a.add(asmjit::x86::rsp, 8);
                     break;
                 }
 

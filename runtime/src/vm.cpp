@@ -7,486 +7,622 @@
 
 namespace alkv::vm {
 
-static ObjArray* asArray(const Value& v) {
-    if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::Array)
-        throw std::runtime_error("TypeError: expected array");
-    return static_cast<ObjArray*>(v.as.obj);
-}
+// ======= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =======
+    static ObjArray* asArray(const Value& v) {
+        if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::Array)
+            throw std::runtime_error("TypeError: expected array");
+        return static_cast<ObjArray*>(v.as.obj);
+    }
 
-static ObjInstance* asInstance(const Value& v) {
-    if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::Instance)
-        throw std::runtime_error("TypeError: expected object instance");
-    return static_cast<ObjInstance*>(v.as.obj);
-}
+    static ObjInstance* asInstance(const Value& v) {
+        if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::Instance)
+            throw std::runtime_error("TypeError: expected object instance");
+        return static_cast<ObjInstance*>(v.as.obj);
+    }
 
-static ObjFuncRef* asFuncRef(const Value& v) {
-    if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::FuncRef)
-        throw std::runtime_error("TypeError: expected func ref");
-    return static_cast<ObjFuncRef*>(v.as.obj);
-}
+    static ObjFuncRef* asFuncRef(const Value& v) {
+        if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::FuncRef)
+            throw std::runtime_error("TypeError: expected func ref");
+        return static_cast<ObjFuncRef*>(v.as.obj);
+    }
 
-static ObjClassRef* asClassRef(const Value& v) {
-    if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::ClassRef)
-        throw std::runtime_error("TypeError: expected class ref");
-    return static_cast<ObjClassRef*>(v.as.obj);
-}
+    static ObjClassRef* asClassRef(const Value& v) {
+        if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::ClassRef)
+            throw std::runtime_error("TypeError: expected class ref");
+        return static_cast<ObjClassRef*>(v.as.obj);
+    }
 
-static ObjFieldRef* asFieldRef(const Value& v) {
-    if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::FieldRef)
-        throw std::runtime_error("TypeError: expected field ref");
-    return static_cast<ObjFieldRef*>(v.as.obj);
-}
+    static ObjFieldRef* asFieldRef(const Value& v) {
+        if (v.tag != ValueTag::Obj || !v.as.obj || v.as.obj->type != ObjType::FieldRef)
+            throw std::runtime_error("TypeError: expected field ref");
+        return static_cast<ObjFieldRef*>(v.as.obj);
+    }
 
-static bool valueEquals(const Value& a, const Value& b) {
-    if (a.tag != b.tag) return false;
-    switch (a.tag) {
-        case ValueTag::Nil:   return true;
-        case ValueTag::Int:   return a.as.i == b.as.i;
-        case ValueTag::Float: return a.as.f == b.as.f;
-        case ValueTag::Bool:  return a.as.b == b.as.b;
-        case ValueTag::Obj: {
-            if (a.as.obj == b.as.obj) return true;
-            if (!a.as.obj || !b.as.obj) return false;
-            if (a.as.obj->type != b.as.obj->type) return false;
-            if (a.as.obj->type == ObjType::String) {
-                auto* sa = static_cast<ObjString*>(a.as.obj);
-                auto* sb = static_cast<ObjString*>(b.as.obj);
-                return sa->view() == sb->view();
+    static bool valueEquals(const Value& a, const Value& b) {
+        if (a.tag != b.tag) return false;
+        switch (a.tag) {
+            case ValueTag::Nil:   return true;
+            case ValueTag::Int:   return a.as.i == b.as.i;
+            case ValueTag::Float: return a.as.f == b.as.f;
+            case ValueTag::Bool:  return a.as.b == b.as.b;
+            case ValueTag::Obj: {
+                if (a.as.obj == b.as.obj) return true;
+                if (!a.as.obj || !b.as.obj) return false;
+                if (a.as.obj->type != b.as.obj->type) return false;
+                if (a.as.obj->type == ObjType::String) {
+                    auto* sa = static_cast<ObjString*>(a.as.obj);
+                    auto* sb = static_cast<ObjString*>(b.as.obj);
+                    return sa->view() == sb->view();
+                }
+                return false;
             }
-            // остальные объекты по ссылке
-            return false;
+        }
+        return false;
+    }
+
+    int32_t VM::asInt(const Value& v) {
+        if (v.tag != ValueTag::Int) throw std::runtime_error("TypeError: expected int");
+        return v.as.i;
+    }
+    float VM::asFloat(const Value& v) {
+        if (v.tag != ValueTag::Float) throw std::runtime_error("TypeError: expected float");
+        return v.as.f;
+    }
+    bool VM::asBool(const Value& v) {
+        if (v.tag != ValueTag::Bool) throw std::runtime_error("TypeError: expected bool");
+        return v.as.b;
+    }
+
+    void VM::loadModule(const std::vector<bc::LoadedFunction>& fns) {
+        fnByName_.clear();
+        fnByName_.reserve(fns.size());
+        for (const auto& f : fns) {
+            fnByName_[f.name] = &f;
         }
     }
-    return false;
-}
-
-int32_t VM::asInt(const Value& v) {
-    if (v.tag != ValueTag::Int) throw std::runtime_error("TypeError: expected int");
-    return v.as.i;
-}
-float VM::asFloat(const Value& v) {
-    if (v.tag != ValueTag::Float) throw std::runtime_error("TypeError: expected float");
-    return v.as.f;
-}
-bool VM::asBool(const Value& v) {
-    if (v.tag != ValueTag::Bool) throw std::runtime_error("TypeError: expected bool");
-    return v.as.b;
-}
-
-void VM::loadModule(const std::vector<bc::LoadedFunction>& fns) {
-    fnByName_.clear();
-    fnByName_.reserve(fns.size());
-    for (const auto& f : fns) {
-        fnByName_[f.name] = &f;
-    }
-}
 
 // ---- минимальная VM-layout таблица полей: className -> fieldName -> slotIndex
-// можно вынести в состояние VM, если хочешь сохранить между вызовами.
-static std::unordered_map<std::string, std::unordered_map<std::string, std::size_t>> g_fieldSlots;
+    static std::unordered_map<std::string, std::unordered_map<std::string, std::size_t>> g_fieldSlots;
 
-static std::size_t getFieldSlot(std::string_view cls, std::string_view field) {
-    auto& fm = g_fieldSlots[std::string(cls)];
-    auto it = fm.find(std::string(field));
-    if (it != fm.end()) return it->second;
-    std::size_t slot = fm.size();
-    fm[std::string(field)] = slot;
-    return slot;
-}
-
-// ---- native calls (твои ochev.*)
-static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
-    auto getArg = [&](uint32_t i) -> const Value& {
-        if (i >= argc) throw std::runtime_error("CALL_NATIVE: arg OOB");
-        return mem.reg(static_cast<uint16_t>(i));
-    };
-
-    switch (nativeId) {
-        case 1: { // ochev.Out(x)
-            if (argc != 1) throw std::runtime_error("ochev.Out expects 1 arg");
-            const Value& v = getArg(0);
-            // минимальный принтер
-            if (v.tag == ValueTag::Int) std::cout << v.as.i;
-            else if (v.tag == ValueTag::Float) std::cout << v.as.f;
-            else if (v.tag == ValueTag::Bool) std::cout << (v.as.b ? "true" : "false");
-            else if (v.tag == ValueTag::Nil) std::cout << "nil";
-            else if (v.tag == ValueTag::Obj && v.as.obj && v.as.obj->type == ObjType::String)
-                std::cout << static_cast<ObjString*>(v.as.obj)->view();
-            else
-                std::cout << "<obj>";
-            std::cout << "\n";
-            return Value::nil();
-        }
-        case 2: { // ochev.In() -> string
-            if (argc != 0) throw std::runtime_error("ochev.In expects 0 args");
-            std::string line;
-            std::getline(std::cin, line);
-            auto* s = mem.heap.allocString(line);
-            return Value::object(s);
-        }
-        // 3/4/5 можно расширить под твою реальную семантику
-        default:
-            throw std::runtime_error("Unknown nativeId: " + std::to_string(nativeId));
+    static std::size_t getFieldSlot(std::string_view cls, std::string_view field) {
+        auto& fm = g_fieldSlots[std::string(cls)];
+        auto it = fm.find(std::string(field));
+        if (it != fm.end()) return it->second;
+        std::size_t slot = fm.size();
+        fm[std::string(field)] = slot;
+        return slot;
     }
-}
 
-Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
-    std::unordered_map<uint32_t, uint32_t> compilation_candidates;
-    std::unordered_map<uint32_t, Func> compiled_blocks;
-    compiler::Compiler compiler = compiler::Compiler(mem, g_fieldSlots, fnByName_, true, true);
-    auto* entry_ret_ptr = new Value();
-    uint8_t end_flag = 0;
+    static Value callNative(VMMemory& mem, uint32_t nativeId, uint32_t argc) {
+        auto getArg = [&](uint32_t i) -> const Value& {
+            if (i >= argc) throw std::runtime_error("CALL_NATIVE: arg OOB");
+            return mem.reg(static_cast<uint16_t>(i));
+        };
 
-    auto it = fnByName_.find(entryName);
-    if (it == fnByName_.end()) throw std::runtime_error("Entry function not found: " + entryName);
-    const bc::LoadedFunction* entry = it->second;
+        auto asIntLocal = [&](const Value& v) -> int32_t {
+            if (v.tag != ValueTag::Int) throw std::runtime_error("TypeError: expected int");
+            return v.as.i;
+        };
+        auto asFloatLocal = [&](const Value& v) -> float {
+            if (v.tag != ValueTag::Float) throw std::runtime_error("TypeError: expected float");
+            return v.as.f;
+        };
 
-    // push entry frame
-    mem.pushFrame(&entry->fn, entry->fn.regCount, /*returnPc*/-1, /*returnDst*/255);
-
-    // args -> R0.. convention
-    if (args.size() > entry->fn.regCount) {
-        mem.popFrame();
-        throw std::runtime_error("Too many args for regCount");
-    }
-    for (size_t i = 0; i < args.size(); ++i) mem.reg(static_cast<uint16_t>(i)) = args[i];
-
-    // интерпретатор: всегда исполняем currentFrame()
-    while (!mem.callStack.empty()) {
-        Frame& fr = mem.currentFrame();
-        const auto& code = fr.fn->code;
-
-        if (fr.pc < 0 || fr.pc >= static_cast<int32_t>(code.size())) {
-            mem.popFrame();
-            throw std::runtime_error("Bytecode error: pc out of bounds");
-        }
-
-        uint32_t w = code[fr.pc];
-        bc::Opcode op = bc::decodeOp(w);
-        /*std::cout << "pc = " << fr.pc << std::endl;
-        std::cout << "r[" << 0 << "] = " << mem.reg(0).as.i << std::endl;
-        std::cout << "r[" << 1 << "] = " << mem.reg(1).as.i << std::endl;
-        std::cout << "r[" << 2 << "] = " << mem.reg(2).as.i << std::endl;
-        std::cout << "r[" << 3 << "] = " << mem.reg(3).as.i << std::endl;
-        std::cout << "r[" << 4 << "] = " << mem.reg(4).as.i << std::endl;
-        std::cout << std::endl;*/
-
-        switch (op) {
-            case bc::Opcode::NOP: {
-                fr.pc++;
-                break;
+        auto numericMax = [&](const Value& a, const Value& b) -> Value {
+            if (a.tag == ValueTag::Int && b.tag == ValueTag::Int) {
+                return Value::i32(std::max(a.as.i, b.as.i));
             }
-            case bc::Opcode::MOV: {
-                auto d = abc(w);
-                mem.reg(d.a) = mem.reg(d.b);
-                fr.pc++;
-                break;
+            if (a.tag == ValueTag::Float && b.tag == ValueTag::Float) {
+                return Value::f32(std::max(a.as.f, b.as.f));
             }
-            case bc::Opcode::LOADK: {
-                auto d = abx(w);
-                if (d.bx >= fr.fn->constPool.size()) throw std::runtime_error("LOADK: const OOB");
-                mem.reg(d.a) = fr.fn->constPool[d.bx];
-                fr.pc++;
-                break;
+            if (a.tag == ValueTag::Int && b.tag == ValueTag::Float) {
+                return Value::f32(std::max(static_cast<float>(a.as.i), b.as.f));
             }
+            if (a.tag == ValueTag::Float && b.tag == ValueTag::Int) {
+                return Value::f32(std::max(a.as.f, static_cast<float>(b.as.i)));
+            }
+            throw std::runtime_error("TypeError: max expects (int|float, int|float)");
+        };
+        auto numericMin = [&](const Value& a, const Value& b) -> Value {
+            if (a.tag == ValueTag::Int && b.tag == ValueTag::Int) {
+                return Value::i32(std::min(a.as.i, b.as.i));
+            }
+            if (a.tag == ValueTag::Float && b.tag == ValueTag::Float) {
+                return Value::f32(std::min(a.as.f, b.as.f));
+            }
+            if (a.tag == ValueTag::Int && b.tag == ValueTag::Float) {
+                return Value::f32(std::min(static_cast<float>(a.as.i), b.as.f));
+            }
+            if (a.tag == ValueTag::Float && b.tag == ValueTag::Int) {
+                return Value::f32(std::min(a.as.f, static_cast<float>(b.as.i)));
+            }
+            throw std::runtime_error("TypeError: min expects (int|float, int|float)");
+        };
 
-            // ---- arithmetic int
-            case bc::Opcode::ADD_I:
-            case bc::Opcode::SUB_I:
-            case bc::Opcode::MUL_I:
-            case bc::Opcode::DIV_I:
-            case bc::Opcode::MOD_I: {
-                auto d = abc(w);
-                int32_t lhs = asInt(mem.reg(d.b));
-                int32_t rhs = asInt(mem.reg(d.c));
-                int32_t res = 0;
-                switch (op) {
-                    case bc::Opcode::ADD_I: res = lhs + rhs; break;
-                    case bc::Opcode::SUB_I: res = lhs - rhs; break;
-                    case bc::Opcode::MUL_I: res = lhs * rhs; break;
-                    case bc::Opcode::DIV_I: res = lhs / rhs; break;
-                    case bc::Opcode::MOD_I: res = lhs % rhs; break;
-                    default: break;
-                }
-                mem.reg(d.a) = Value::i32(res);
-                fr.pc++;
-                break;
+        switch (nativeId) {
+            case 1: { // ochev.Out(x)
+                if (argc != 1) throw std::runtime_error("ochev.Out expects 1 arg");
+                const Value& v = getArg(0);
+                if (v.tag == ValueTag::Int) std::cout << v.as.i;
+                else if (v.tag == ValueTag::Float) std::cout << v.as.f;
+                else if (v.tag == ValueTag::Bool) std::cout << (v.as.b ? "true" : "false");
+                else if (v.tag == ValueTag::Nil) std::cout << "nil";
+                else if (v.tag == ValueTag::Obj && v.as.obj && v.as.obj->type == ObjType::String)
+                    std::cout << static_cast<ObjString*>(v.as.obj)->view();
+                else
+                    std::cout << "<obj>";
+                std::cout << "\n";
+                return Value::nil();
             }
 
-            // ---- arithmetic float
-            case bc::Opcode::ADD_F:
-            case bc::Opcode::SUB_F:
-            case bc::Opcode::MUL_F:
-            case bc::Opcode::DIV_F:
-            case bc::Opcode::MOD_F: {
-                auto d = abc(w);
-                float lhs = asFloat(mem.reg(d.b));
-                float rhs = asFloat(mem.reg(d.c));
-                float res = 0;
-                switch (op) {
-                    case bc::Opcode::ADD_F: res = lhs + rhs; break;
-                    case bc::Opcode::SUB_F: res = lhs - rhs; break;
-                    case bc::Opcode::MUL_F: res = lhs * rhs; break;
-                    case bc::Opcode::DIV_F: res = lhs / rhs; break;
-                    case bc::Opcode::MOD_F: res = std::fmod(lhs, rhs); break;
-                    default: break;
-                }
-                mem.reg(d.a) = Value::f32(res);
-                fr.pc++;
-                break;
+            case 2: { // ochev.In() -> string
+                if (argc != 0) throw std::runtime_error("ochev.In expects 0 args");
+                std::string line;
+                std::getline(std::cin, line);
+                auto* s = mem.heap.allocString(line);
+                return Value::object(s);
             }
 
-            // ---- comparisons -> bool
-            case bc::Opcode::LT_I: case bc::Opcode::LE_I:
-            case bc::Opcode::GT_I: case bc::Opcode::GE_I: {
-                auto d = abc(w);
-                int32_t lhs = asInt(mem.reg(d.b));
-                int32_t rhs = asInt(mem.reg(d.c));
-                bool res = false;
-                switch (op) {
-                    case bc::Opcode::LT_I: res = lhs <  rhs; break;
-                    case bc::Opcode::LE_I: res = lhs <= rhs; break;
-                    case bc::Opcode::GT_I: res = lhs >  rhs; break;
-                    case bc::Opcode::GE_I: res = lhs >= rhs; break;
-                    default: break;
-                }
-                mem.reg(d.a) = Value::boolean(res);
-                fr.pc++;
-                break;
-            }
-            case bc::Opcode::LT_F: case bc::Opcode::LE_F:
-            case bc::Opcode::GT_F: case bc::Opcode::GE_F: {
-                auto d = abc(w);
-                float lhs = asFloat(mem.reg(d.b));
-                float rhs = asFloat(mem.reg(d.c));
-                bool res = false;
-                switch (op) {
-                    case bc::Opcode::LT_F: res = lhs <  rhs; break;
-                    case bc::Opcode::LE_F: res = lhs <= rhs; break;
-                    case bc::Opcode::GT_F: res = lhs >  rhs; break;
-                    case bc::Opcode::GE_F: res = lhs >= rhs; break;
-                    default: break;
-                }
-                mem.reg(d.a) = Value::boolean(res);
-                fr.pc++;
-                break;
-            }
-
-            case bc::Opcode::EQ:
-            case bc::Opcode::NE: {
-                auto d = abc(w);
-                bool eq = valueEquals(mem.reg(d.b), mem.reg(d.c));
-                mem.reg(d.a) = Value::boolean(op == bc::Opcode::EQ ? eq : !eq);
-                fr.pc++;
-                break;
-            }
-
-            case bc::Opcode::NOT: {
-                auto d = abc(w);
-                bool v = asBool(mem.reg(d.b));
-                mem.reg(d.a) = Value::boolean(!v);
-                fr.pc++;
-                break;
-            }
-
-            // ---- jumps: pc = (pc+1) + sBx
-            case bc::Opcode::JMP: {
-                auto d = asbx(w);
-                fr.pc = (fr.pc + 1) + d.sbx;
-                break;
-            }
-            case bc::Opcode::JMP_T: {
-                auto d = asbx(w);
-                bool cond = asBool(mem.reg(d.a));
-                fr.pc = cond ? ((fr.pc + 1) + d.sbx) : (fr.pc + 1);
-                break;
-            }
-            case bc::Opcode::JMP_F: {
-                auto d = asbx(w);
-                bool cond = asBool(mem.reg(d.a));
-                if (cond) {
-                    ++fr.pc;
-                    if (compilation_candidates.contains(fr.pc)) {
-                        ++compilation_candidates[fr.pc];
-                        if (compilation_candidates[fr.pc] > CONST_HOT_PATH_TIMES) {
-                            int old_pc = fr.pc;
-                            if (!compiled_blocks.contains(fr.pc)) {
-                                std::cout << "compiling at pc " << old_pc << " for " << d.sbx << " bytecode instructions" << std::endl;
-                                compiled_blocks[old_pc] = compiler.create_func(entry_ret_ptr, &end_flag, d.sbx);
-                            }
-                            //std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
-                            compiled_blocks[old_pc]();
-                            //std::cout << "after running block pc = " << fr.pc << std::endl;
-                        }
-                    } else {
-                        compilation_candidates[fr.pc] = 1;
+            case 3: { // ochev.TudaSyuda(...)
+                // Вариант A: (arr, i, j)
+                if (argc == 3) {
+                    ObjArray* arr = asArray(getArg(0));
+                    int32_t i = asIntLocal(getArg(1));
+                    int32_t j = asIntLocal(getArg(2));
+                    if (i < 0 || j < 0 ||
+                        i >= static_cast<int32_t>(arr->elems.size()) ||
+                        j >= static_cast<int32_t>(arr->elems.size())) {
+                        throw std::runtime_error("ochev.TudaSyuda: index OOB");
                     }
-                } else {
-                    fr.pc += d.sbx + 1;
+                    Value* e1 = &arr->elems[static_cast<std::size_t>(i)];
+                    Value* e2 = &arr->elems[static_cast<std::size_t>(j)];
+                    auto* temp = new Value();
+                    *temp = *e2;
+                    *e2 = *e1;
+                    *e1 = *temp;
+                    delete temp;
+                    return Value::nil();
                 }
-                break;
-            }
-
-            case bc::Opcode::I2F: {
-                auto d = abc(w);
-                int32_t v = asInt(mem.reg(d.b));
-                mem.reg(d.a) = Value::f32(static_cast<float>(v));
-                fr.pc++;
-                break;
-            }
-
-            // ---- arrays
-            case bc::Opcode::NEW_ARR: {
-                auto d = abc(w);
-                int32_t n = asInt(mem.reg(d.b));
-                if (n < 0) throw std::runtime_error("NEW_ARR: negative size");
-                auto* arr = mem.heap.allocArray(static_cast<std::size_t>(n));
-                mem.reg(d.a) = Value::object(arr);
-                fr.pc++;
-                break;
-            }
-            case bc::Opcode::GET_ELEM: {
-                auto d = abc(w);
-                auto* arr = asArray(mem.reg(d.b));
-                int32_t idx = asInt(mem.reg(d.c));
-                if (idx < 0 || idx >= static_cast<int32_t>(arr->elems.size()))
-                    throw std::runtime_error("GET_ELEM: index OOB");
-                mem.reg(d.a) = arr->elems[static_cast<std::size_t>(idx)];
-                fr.pc++;
-                break;
-            }
-            case bc::Opcode::SET_ELEM: {
-                auto d = abc(w);
-                auto* arr = asArray(mem.reg(d.a));
-                int32_t idx = asInt(mem.reg(d.b));
-                if (idx < 0 || idx >= static_cast<int32_t>(arr->elems.size()))
-                    throw std::runtime_error("SET_ELEM: index OOB");
-                arr->elems[static_cast<std::size_t>(idx)] = mem.reg(d.c);
-                fr.pc++;
-                break;
-            }
-
-            // ---- objects
-            case bc::Opcode::NEW_OBJ: {
-                auto d = abx(w);
-                if (d.bx >= fr.fn->constPool.size()) throw std::runtime_error("NEW_OBJ: const OOB");
-                auto* cr = asClassRef(fr.fn->constPool[d.bx]);
-                auto* inst = mem.heap.allocInstance(cr->name);
-                mem.reg(d.a) = Value::object(inst);
-                fr.pc++;
-                break;
-            }
-
-            // GET_FIELD/SET_FIELD: ABC с fieldRefReg (как в твоём компиляторе сейчас)
-            case bc::Opcode::GET_FIELD: {
-                auto d = abc(w);
-                auto* inst = asInstance(mem.reg(d.b));
-                auto* fld = asFieldRef(mem.reg(d.c));
-
-                // (опционально) проверка класса:
-                // if (inst->className->view() != fld->className->view()) ...
-
-                std::size_t slot = getFieldSlot(fld->className->view(), fld->fieldName->view());
-                if (inst->fields.size() <= slot) inst->fields.resize(slot + 1, Value::nil());
-
-                mem.reg(d.a) = inst->fields[slot];
-                fr.pc++;
-                break;
-            }
-
-            case bc::Opcode::SET_FIELD: {
-                auto d = abc(w);
-                auto* inst = asInstance(mem.reg(d.a));
-                auto* fld = asFieldRef(mem.reg(d.b));
-                std::size_t slot = getFieldSlot(fld->className->view(), fld->fieldName->view());
-                if (inst->fields.size() <= slot) inst->fields.resize(slot + 1, Value::nil());
-
-                inst->fields[slot] = mem.reg(d.c);
-                fr.pc++;
-                break;
-            }
-
-            // ---- calls
-            case bc::Opcode::CALL: {
-                auto d = abc(w);
-                auto* fref = asFuncRef(mem.reg(d.b));
-                auto itf = fnByName_.find(std::string(fref->name->view()));
-                if (itf == fnByName_.end()) throw std::runtime_error("CALL: unknown function");
-
-                const bc::LoadedFunction* callee = itf->second;
-
-
-                // подготовим новый фрейм
-                int32_t returnPc = fr.pc + 1;
-                uint8_t returnDst = d.a;
-
-                mem.pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
-
-                // args already in R0..R(argc-1) by convention
-                // caller уже положил их туда (в твоём компиляторе есть placeArgsIntoR0)
-                // поэтому здесь ничего копировать не надо
-
-                break;
-            }
-
-            case bc::Opcode::CALLK: {
-                auto d = abx(w);
-                auto* fref = asFuncRef(fr.fn->constPool[d.bx]);
-                auto itf = fnByName_.find(std::string(fref->name->view()));
-
-                const bc::LoadedFunction* callee = itf->second;
-
-                int32_t returnPc = fr.pc + 1;
-                uint8_t returnDst = d.a;
-
-                mem.pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
-                break;
-            }
-
-            case bc::Opcode::CALL_NATIVE: {
-                auto d = abc(w);
-                uint32_t nativeId = d.b;
-                uint32_t argc = d.c;
-                Value ret = callNative(mem, nativeId, argc);
-                mem.reg(d.a) = ret;
-                fr.pc++;
-                break;
-            }
-
-            case bc::Opcode::RET: {
-                auto d = abc(w);
-                Value ret = Value::nil();
-                if (d.a != 255) ret = mem.reg(d.a);
-
-                int32_t returnPc = fr.returnPc;
-                uint8_t returnDst = fr.returnDst;
-
-                mem.popFrame();
-
-                if (mem.callStack.empty()) {
-                    // возврат из entry
-                    return ret;
+                // Вариант B: (arr1, i1, arr2, i2)
+                if (argc == 4) {
+                    ObjArray* a1 = asArray(getArg(0));
+                    int32_t i1 = asIntLocal(getArg(1));
+                    ObjArray* a2 = asArray(getArg(2));
+                    int32_t i2 = asIntLocal(getArg(3));
+                    if (i1 < 0 || i1 >= static_cast<int32_t>(a1->elems.size()) ||
+                        i2 < 0 || i2 >= static_cast<int32_t>(a2->elems.size())) {
+                        throw std::runtime_error("ochev.TudaSyuda: index OOB");
+                    }
+                    Value* e1 = &a1->elems[static_cast<std::size_t>(i1)];
+                    Value* e2 = &a2->elems[static_cast<std::size_t>(i2)];
+                    auto* temp = new Value();
+                    *temp = *e2;
+                    *e2 = *e1;
+                    *e1 = *temp;
+                    delete temp;
+                    return Value::nil();
                 }
+                throw std::runtime_error("ochev.TudaSyuda expects 3 args (arr,i,j) or 4 args (arr1,i1,arr2,i2)");
+            }
 
-                // restore caller pc and place return
-                Frame& caller = mem.currentFrame();
-                caller.pc = returnPc;
-                if (returnDst != 255) mem.reg(returnDst) = ret;
-                break;
+            case 4: { // ochev.>>>(a, b) -> max
+                if (argc != 2) throw std::runtime_error("ochev.>>> expects 2 args");
+                return numericMax(getArg(0), getArg(1));
+            }
+
+            case 5: { // ochev.<<<(a, b) -> min
+                if (argc != 2) throw std::runtime_error("ochev.<<< expects 2 args");
+                return numericMin(getArg(0), getArg(1));
             }
 
             default:
-                throw std::runtime_error("Unknown opcode");
+                throw std::runtime_error("Unknown nativeId: " + std::to_string(nativeId));
+        }
+    }
+
+// Структура для отслеживания состояния VM
+    struct VMState {
+        uint64_t instructionsExecuted = 0;
+        uint64_t lastGcAtInstructions = 0;
+        static constexpr uint64_t GC_INSTRUCTION_INTERVAL = 10000;
+
+        bool shouldRunGC() {
+            return (instructionsExecuted - lastGcAtInstructions) >= GC_INSTRUCTION_INTERVAL;
         }
 
-        // место под GC:
-        // if (needGC) { mem.markRoots(); mem.heap.sweep(); }
-    }
-    if (end_flag) {
-        return *entry_ret_ptr;
-    }
+        void recordGC() {
+            lastGcAtInstructions = instructionsExecuted;
+        }
+    };
 
-    return Value::nil();
-}
+    Value VM::run(const std::string& entryName, const std::vector<Value>& args) {
+        std::unordered_map<uint32_t, uint32_t> compilation_candidates;
+        std::unordered_map<uint32_t, Func> compiled_blocks;
+        compiler::Compiler compiler = compiler::Compiler(mem, g_fieldSlots, fnByName_, true, true);
+        auto* entry_ret_ptr = new Value();
+        uint8_t end_flag = 0;
+
+        auto it = fnByName_.find(entryName);
+        if (it == fnByName_.end()) throw std::runtime_error("Entry function not found: " + entryName);
+        const bc::LoadedFunction* entry = it->second;
+
+        // Инициализируем состояние VM
+        VMState vmState;
+
+        // push entry frame
+        mem.pushFrame(&entry->fn, entry->fn.regCount, /*returnPc*/-1, /*returnDst*/255);
+
+        // args -> R0.. convention
+        if (args.size() > entry->fn.regCount) {
+            mem.popFrame();
+            throw std::runtime_error("Too many args for regCount");
+        }
+        for (size_t i = 0; i < args.size(); ++i) mem.reg(static_cast<uint16_t>(i)) = args[i];
+
+        // интерпретатор
+        while (!mem.callStack.empty()) {
+            Frame& fr = mem.currentFrame();
+            const auto& code = fr.fn->code;
+
+            if (fr.pc < 0 || fr.pc >= static_cast<int32_t>(code.size())) {
+                mem.popFrame();
+                throw std::runtime_error("Bytecode error: pc out of bounds");
+            }
+
+            uint32_t w = code[fr.pc];
+            bc::Opcode op = bc::decodeOp(w);
+
+            // Увеличиваем счетчик инструкций
+            vmState.instructionsExecuted++;
+
+            // Периодический запуск GC (не только по памяти, но и по времени/инструкциям)
+            if (vmState.shouldRunGC()) {
+                mem.collectGarbage();
+                vmState.recordGC();
+            }
+
+            switch (op) {
+                case bc::Opcode::NOP: {
+                    fr.pc++;
+                    break;
+                }
+                case bc::Opcode::MOV: {
+                    auto d = abc(w);
+                    mem.reg(d.a) = mem.reg(d.b);
+                    fr.pc++;
+                    break;
+                }
+                case bc::Opcode::LOADK: {
+                    auto d = abx(w);
+                    if (d.bx >= fr.fn->constPool.size()) throw std::runtime_error("LOADK: const OOB");
+                    mem.reg(d.a) = fr.fn->constPool[d.bx];
+                    fr.pc++;
+                    break;
+                }
+
+                    // ---- arithmetic int
+                case bc::Opcode::ADD_I:
+                case bc::Opcode::SUB_I:
+                case bc::Opcode::MUL_I:
+                case bc::Opcode::DIV_I:
+                case bc::Opcode::MOD_I: {
+                    auto d = abc(w);
+                    int32_t lhs = asInt(mem.reg(d.b));
+                    int32_t rhs = asInt(mem.reg(d.c));
+                    int32_t res = 0;
+                    switch (op) {
+                        case bc::Opcode::ADD_I: res = lhs + rhs; break;
+                        case bc::Opcode::SUB_I: res = lhs - rhs; break;
+                        case bc::Opcode::MUL_I: res = lhs * rhs; break;
+                        case bc::Opcode::DIV_I: res = lhs / rhs; break;
+                        case bc::Opcode::MOD_I: res = lhs % rhs; break;
+                        default: break;
+                    }
+                    mem.reg(d.a) = Value::i32(res);
+                    fr.pc++;
+                    break;
+                }
+
+                    // ---- arithmetic float
+                case bc::Opcode::ADD_F:
+                case bc::Opcode::SUB_F:
+                case bc::Opcode::MUL_F:
+                case bc::Opcode::DIV_F:
+                case bc::Opcode::MOD_F: {
+                    auto d = abc(w);
+                    float lhs = asFloat(mem.reg(d.b));
+                    float rhs = asFloat(mem.reg(d.c));
+                    float res = 0;
+                    switch (op) {
+                        case bc::Opcode::ADD_F: res = lhs + rhs; break;
+                        case bc::Opcode::SUB_F: res = lhs - rhs; break;
+                        case bc::Opcode::MUL_F: res = lhs * rhs; break;
+                        case bc::Opcode::DIV_F: res = lhs / rhs; break;
+                        case bc::Opcode::MOD_F: res = std::fmod(lhs, rhs); break;
+                        default: break;
+                    }
+                    mem.reg(d.a) = Value::f32(res);
+                    fr.pc++;
+                    break;
+                }
+
+                    // ---- comparisons -> bool
+                case bc::Opcode::LT_I: case bc::Opcode::LE_I:
+                case bc::Opcode::GT_I: case bc::Opcode::GE_I: {
+                    auto d = abc(w);
+                    int32_t lhs = asInt(mem.reg(d.b));
+                    int32_t rhs = asInt(mem.reg(d.c));
+                    bool res = false;
+                    switch (op) {
+                        case bc::Opcode::LT_I: res = lhs <  rhs; break;
+                        case bc::Opcode::LE_I: res = lhs <= rhs; break;
+                        case bc::Opcode::GT_I: res = lhs >  rhs; break;
+                        case bc::Opcode::GE_I: res = lhs >= rhs; break;
+                        default: break;
+                    }
+                    mem.reg(d.a) = Value::boolean(res);
+                    fr.pc++;
+                    break;
+                }
+                case bc::Opcode::LT_F: case bc::Opcode::LE_F:
+                case bc::Opcode::GT_F: case bc::Opcode::GE_F: {
+                    auto d = abc(w);
+                    float lhs = asFloat(mem.reg(d.b));
+                    float rhs = asFloat(mem.reg(d.c));
+                    bool res = false;
+                    switch (op) {
+                        case bc::Opcode::LT_F: res = lhs <  rhs; break;
+                        case bc::Opcode::LE_F: res = lhs <= rhs; break;
+                        case bc::Opcode::GT_F: res = lhs >  rhs; break;
+                        case bc::Opcode::GE_F: res = lhs >= rhs; break;
+                        default: break;
+                    }
+                    mem.reg(d.a) = Value::boolean(res);
+                    fr.pc++;
+                    break;
+                }
+
+                case bc::Opcode::EQ:
+                case bc::Opcode::NE: {
+                    auto d = abc(w);
+                    bool eq = valueEquals(mem.reg(d.b), mem.reg(d.c));
+                    mem.reg(d.a) = Value::boolean(op == bc::Opcode::EQ ? eq : !eq);
+                    fr.pc++;
+                    break;
+                }
+
+                case bc::Opcode::NOT: {
+                    auto d = abc(w);
+                    bool v = asBool(mem.reg(d.b));
+                    mem.reg(d.a) = Value::boolean(!v);
+                    fr.pc++;
+                    break;
+                }
+
+                    // ---- jumps: pc = (pc+1) + sBx
+                case bc::Opcode::JMP: {
+                    auto d = asbx(w);
+                    fr.pc = (fr.pc + 1) + d.sbx;
+                    break;
+                }
+                case bc::Opcode::JMP_T: {
+                    auto d = asbx(w);
+                    bool cond = asBool(mem.reg(d.a));
+                    fr.pc = cond ? ((fr.pc + 1) + d.sbx) : (fr.pc + 1);
+                    break;
+                }
+                case bc::Opcode::JMP_F: {
+                    auto d = asbx(w);
+                    bool cond = asBool(mem.reg(d.a));
+                    if (cond) {
+                        ++fr.pc;
+                        if (compilation_candidates.contains(fr.pc)) {
+                            ++compilation_candidates[fr.pc];
+                            if (compilation_candidates[fr.pc] > CONST_HOT_PATH_TIMES) {
+                                int old_pc = fr.pc;
+                                if (!compiled_blocks.contains(fr.pc)) {
+                                    std::cout << "compiling at pc " << old_pc << " for " << d.sbx << " bytecode instructions" << std::endl;
+                                    compiled_blocks[old_pc] = compiler.create_func(entry_ret_ptr, &end_flag, d.sbx);
+                                }
+                                //std::cout << "running compiled block at pc " << old_pc << " (hotness: " << compilation_candidates[old_pc] << ")" << std::endl;
+                                compiled_blocks[old_pc]();
+                                //std::cout << "after running block pc = " << fr.pc << std::endl;
+                            }
+                        } else {
+                            compilation_candidates[fr.pc] = 1;
+                        }
+                    } else {
+                        fr.pc += d.sbx + 1;
+                    }
+                    break;
+                }
+
+                case bc::Opcode::I2F: {
+                    auto d = abc(w);
+                    int32_t v = asInt(mem.reg(d.b));
+                    mem.reg(d.a) = Value::f32(static_cast<float>(v));
+                    fr.pc++;
+                    break;
+                }
+
+                    // ---- arrays
+                case bc::Opcode::NEW_ARR: {
+                    auto d = abc(w);
+                    int32_t n = asInt(mem.reg(d.b));
+                    if (n < 0) throw std::runtime_error("NEW_ARR: negative size");
+                    auto* arr = mem.heap.allocArray(static_cast<std::size_t>(n));
+                    mem.reg(d.a) = Value::object(arr);
+                    fr.pc++;
+                    break;
+                }
+                case bc::Opcode::GET_ELEM: {
+                    auto d = abc(w);
+                    auto* arr = asArray(mem.reg(d.b));
+                    int32_t idx = asInt(mem.reg(d.c));
+                    if (idx < 0 || idx >= static_cast<int32_t>(arr->elems.size()))
+                        throw std::runtime_error("GET_ELEM: index OOB");
+                    mem.reg(d.a) = arr->elems[static_cast<std::size_t>(idx)];
+                    fr.pc++;
+                    break;
+                }
+                case bc::Opcode::SET_ELEM: {
+                    auto d = abc(w);
+                    auto* arr = asArray(mem.reg(d.a));
+                    int32_t idx = asInt(mem.reg(d.b));
+                    if (idx < 0 || idx >= static_cast<int32_t>(arr->elems.size()))
+                        throw std::runtime_error("SET_ELEM: index OOB");
+                    arr->elems[static_cast<std::size_t>(idx)] = mem.reg(d.c);
+                    fr.pc++;
+                    break;
+                }
+
+                    // ---- objects
+                case bc::Opcode::NEW_OBJ: {
+                    auto d = abx(w);
+                    if (d.bx >= fr.fn->constPool.size()) throw std::runtime_error("NEW_OBJ: const OOB");
+                    auto* cr = asClassRef(fr.fn->constPool[d.bx]);
+                    auto* inst = mem.heap.allocInstance(cr->name);
+                    mem.reg(d.a) = Value::object(inst);
+                    fr.pc++;
+                    break;
+                }
+
+                    // GET_FIELD/SET_FIELD: ABC с fieldRefReg
+                case bc::Opcode::GET_FIELD: {
+                    auto d = abc(w);
+                    auto* inst = asInstance(mem.reg(d.b));
+                    auto* fld = asFieldRef(mem.reg(d.c));
+
+                    std::size_t slot = getFieldSlot(fld->className->view(), fld->fieldName->view());
+                    if (inst->fields.size() <= slot) inst->fields.resize(slot + 1, Value::nil());
+
+                    mem.reg(d.a) = inst->fields[slot];
+                    fr.pc++;
+                    break;
+                }
+
+                case bc::Opcode::SET_FIELD: {
+                    auto d = abc(w);
+                    auto* inst = asInstance(mem.reg(d.a));
+                    auto* fld = asFieldRef(mem.reg(d.b));
+                    std::size_t slot = getFieldSlot(fld->className->view(), fld->fieldName->view());
+                    if (inst->fields.size() <= slot) inst->fields.resize(slot + 1, Value::nil());
+
+                    inst->fields[slot] = mem.reg(d.c);
+                    fr.pc++;
+                    break;
+                }
+
+                    // ---- calls
+                case bc::Opcode::CALL: {
+                    auto d = abc(w);
+                    uint32_t argc = d.c;
+
+                    auto* fref = asFuncRef(mem.reg(d.b));
+                    auto itf = fnByName_.find(std::string(fref->name->view()));
+                    if (itf == fnByName_.end()) throw std::runtime_error("CALL: unknown function");
+                    const bc::LoadedFunction* callee = itf->second;
+
+                    // сохранить аргументы из caller R0..R(argc-1)
+                    std::vector<Value> argv;
+                    argv.reserve(argc);
+                    for (uint32_t i = 0; i < argc; ++i) argv.push_back(mem.reg(static_cast<uint16_t>(i)));
+
+                    int32_t returnPc = fr.pc + 1;
+                    uint8_t returnDst = d.a;
+
+                    mem.pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
+
+                    if (argc > callee->fn.regCount) {
+                        throw std::runtime_error("CALL: too many args for callee regCount");
+                    }
+                    for (uint32_t i = 0; i < argc; ++i) mem.reg(static_cast<uint16_t>(i)) = argv[i];
+
+                    break;
+                }
+
+                case bc::Opcode::CALLK: {
+                    auto d = abx(w);
+                    if (d.bx >= fr.fn->constPool.size()) throw std::runtime_error("CALLK: const OOB");
+
+                    auto* fref = asFuncRef(fr.fn->constPool[d.bx]);
+                    uint32_t argc = fref->arity;
+
+                    auto itf = fnByName_.find(std::string(fref->name->view()));
+                    if (itf == fnByName_.end()) {
+                        throw std::runtime_error("CALLK: function not found: " + std::string(fref->name->view()));
+                    }
+                    const bc::LoadedFunction* callee = itf->second;
+
+                    std::vector<Value> argv;
+                    argv.reserve(argc);
+                    for (uint32_t i = 0; i < argc; ++i) argv.push_back(mem.reg(static_cast<uint16_t>(i)));
+
+                    int32_t returnPc = fr.pc + 1;
+                    uint8_t returnDst = d.a;
+
+                    mem.pushFrame(&callee->fn, callee->fn.regCount, returnPc, returnDst);
+
+                    if (argc > callee->fn.regCount) {
+                        throw std::runtime_error("CALLK: too many args for callee regCount");
+                    }
+                    for (uint32_t i = 0; i < argc; ++i) mem.reg(static_cast<uint16_t>(i)) = argv[i];
+
+                    break;
+                }
+
+                case bc::Opcode::CALL_NATIVE: {
+                    auto d = abc(w);
+                    uint32_t nativeId = d.b;
+                    uint32_t argc = d.c;
+                    Value ret = callNative(mem, nativeId, argc);
+                    mem.reg(d.a) = ret;
+                    fr.pc++;
+                    break;
+                }
+
+                case bc::Opcode::RET: {
+                    auto d = abc(w);
+                    Value ret = Value::nil();
+                    if (d.a != 255) ret = mem.reg(d.a);
+
+                    int32_t returnPc = fr.returnPc;
+                    uint8_t returnDst = fr.returnDst;
+
+                    mem.popFrame();
+
+                    if (mem.callStack.empty()) {
+                        mem.updateStats();
+                        return ret;
+                    }
+
+                    // if (mem.callStack.empty()) {
+                    //     // Выводим статистику GC перед возвратом
+                    //     mem.updateStats();
+                    //     std::cout << "\n=== VM Statistics ===\n";
+                    //     mem.stats.print();
+                    //     std::cout << "Instructions executed: " << vmState.instructionsExecuted << "\n";
+                    //     std::cout << "=====================\n";
+                    //     return ret;
+                    // }
+
+                    Frame& caller = mem.currentFrame();
+                    caller.pc = returnPc;
+                    if (returnDst != 255) mem.reg(returnDst) = ret;
+                    break;
+                }
+
+                default:
+                    throw std::runtime_error("Unknown opcode");
+            }
+        }
+
+        if (end_flag) {
+            return *entry_ret_ptr;
+        }
+        delete entry_ret_ptr;
+
+        return Value::nil();
+    }
 
 } // namespace alkv::vm

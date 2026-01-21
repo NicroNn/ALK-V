@@ -2,6 +2,7 @@
 #include <vector>
 #include <cstdint>
 #include <cassert>
+#include <iostream>
 
 #include "alkv/vm/value.hpp"
 #include "alkv/vm/heap.hpp"
@@ -16,8 +17,8 @@ struct Frame {
     const alkv::bc::Function* fn = nullptr;
     int32_t pc = 0;
 
-    int32_t returnPc = -1;   // куда вернуться в caller
-    uint8_t returnDst = 255; // в какой рег caller положить return (255 = игнор)
+    int32_t returnPc = -1;
+    uint8_t returnDst = 255;
 };
 
 class VMMemory {
@@ -25,6 +26,26 @@ public:
     Heap heap;
     std::vector<Value> valueStack;
     std::vector<Frame> callStack;
+    
+    // GC statistics
+    struct GCStats {
+        size_t totalCollections = 0;
+        size_t totalBytesFreed = 0;
+        size_t totalObjectsFreed = 0;
+        size_t bytesAllocated = 0;
+        size_t objectsCount = 0;
+        
+        void print() const {
+            std::cout << "GC Statistics:\n";
+            std::cout << "  Collections: " << totalCollections << "\n";
+            std::cout << "  Bytes freed: " << totalBytesFreed << "\n";
+            std::cout << "  Objects freed: " << totalObjectsFreed << "\n";
+            std::cout << "  Currently allocated: " << bytesAllocated << " bytes\n";
+            std::cout << "  Live objects: " << objectsCount << "\n";
+        }
+    };
+    
+    GCStats stats;
 
     std::size_t pushFrame(const alkv::bc::Function* fn, uint16_t regCount, int32_t returnPc, uint8_t returnDst) {
         Frame f;
@@ -61,23 +82,39 @@ public:
         return valueStack[f.base + idx];
     }
 
-    // ---- GC roots ----
+    // ---- GC interface ----
+    void collectGarbage() {
+        markRoots();
+        heap.collectGarbage();
+        updateStats();
+    }
+    
     void markRoots() {
-        // все regs во всех фреймах
+        // Все регистры во всех фреймах
         for (const Frame& fr : callStack) {
             for (uint32_t i = 0; i < fr.regCount; ++i) {
                 markValue(valueStack[fr.base + i]);
             }
-            // constPool текущей функции фрейма — тоже корни
+            // Константный пул текущей функции фрейма
             if (fr.fn) {
                 for (const auto& v : fr.fn->constPool) markValue(v);
             }
         }
     }
+    
+    void forceGC() {
+        collectGarbage();
+    }
+    
+    void updateStats() {
+        stats.totalCollections = heap.getCollections();
+        stats.bytesAllocated = heap.getBytesAllocated();
+        stats.objectsCount = heap.getObjectsCount();
+    }
 
 private:
     void markValue(const Value& v) {
-        if (v.tag == ValueTag::Obj && v.as.obj) {
+        if (v.isObj()) {
             heap.mark(v.as.obj);
         }
     }
