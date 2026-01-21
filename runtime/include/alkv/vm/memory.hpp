@@ -27,6 +27,10 @@ public:
     std::vector<Value> valueStack;
     std::vector<Frame> callStack;
     
+    VMMemory() {
+        heap.setLoggingEnabled(true);
+    }
+    
     // GC statistics
     struct GCStats {
         size_t totalCollections = 0;
@@ -34,12 +38,16 @@ public:
         size_t totalObjectsFreed = 0;
         size_t bytesAllocated = 0;
         size_t objectsCount = 0;
+        size_t lastFreedBytes = 0;
+        size_t lastFreedObjects = 0;
         
         void print() const {
             std::cout << "GC Statistics:\n";
-            std::cout << "  Collections: " << totalCollections << "\n";
-            std::cout << "  Bytes freed: " << totalBytesFreed << "\n";
-            std::cout << "  Objects freed: " << totalObjectsFreed << "\n";
+            std::cout << "  Total collections: " << totalCollections << "\n";
+            std::cout << "  Total bytes freed: " << totalBytesFreed << "\n";
+            std::cout << "  Total objects freed: " << totalObjectsFreed << "\n";
+            std::cout << "  Last collection freed: " << lastFreedBytes 
+                      << " bytes, " << lastFreedObjects << " objects\n";
             std::cout << "  Currently allocated: " << bytesAllocated << " bytes\n";
             std::cout << "  Live objects: " << objectsCount << "\n";
         }
@@ -82,22 +90,25 @@ public:
         return valueStack[f.base + idx];
     }
 
-    // ---- GC interface ----
     void collectGarbage() {
-        markRoots();
-        heap.collectGarbage();
+        heap.collectGarbage([this](Heap& h) { this->markRoots(h); });
         updateStats();
     }
     
-    void markRoots() {
-        // Все регистры во всех фреймах
+    void markRoots(Heap& h) {
         for (const Frame& fr : callStack) {
             for (uint32_t i = 0; i < fr.regCount; ++i) {
-                markValue(valueStack[fr.base + i]);
+                const Value& v = valueStack[fr.base + i];
+                if (v.isObj()) {
+                    h.mark(v.as.obj);
+                }
             }
-            // Константный пул текущей функции фрейма
             if (fr.fn) {
-                for (const auto& v : fr.fn->constPool) markValue(v);
+                for (const auto& v : fr.fn->constPool) {
+                    if (v.isObj()) {
+                        h.mark(v.as.obj);
+                    }
+                }
             }
         }
     }
@@ -108,16 +119,20 @@ public:
     
     void updateStats() {
         stats.totalCollections = heap.getCollections();
+        stats.totalBytesFreed = heap.getTotalFreedBytes();
+        stats.totalObjectsFreed = heap.getTotalFreedObjects();
         stats.bytesAllocated = heap.getBytesAllocated();
         stats.objectsCount = heap.getObjectsCount();
+        stats.lastFreedBytes = heap.getLastFreedBytes();
+        stats.lastFreedObjects = heap.getLastFreedObjects();
     }
 
 private:
-    void markValue(const Value& v) {
+    void markValue(Heap& h, const Value& v) {
         if (v.isObj()) {
-            heap.mark(v.as.obj);
+            h.mark(v.as.obj);
         }
     }
 };
 
-} // namespace alkv::vm
+}

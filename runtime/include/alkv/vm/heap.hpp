@@ -2,7 +2,9 @@
 #include <string_view>
 #include <vector>
 #include <stack>
+#include <functional>
 #include <cstddef>
+#include <iostream>
 #include "alkv/vm/object.hpp"
 
 namespace alkv::vm {
@@ -59,29 +61,21 @@ public:
         return fr;
     }
 
-    // ---- GC interface ----
-    void collectGarbage() {
-        markAll();
-        sweepAll();
+    void collectGarbage(std::function<void(Heap&)> markRoots) {
+        markAll(markRoots);
+        sweep();
         
-        // Динамическая настройка порога
         nextGcThreshold = allocatedBytes * 2;
         collections++;
+        
+        if (enableLogging) {
+            std::cout << "[GC] Collected " << lastFreedBytes << " bytes, "
+                      << lastFreedObjects << " objects. Live: " 
+                      << getObjectsCount() << " objects, " 
+                      << allocatedBytes << " bytes\n";
+        }
     }
     
-    size_t getBytesAllocated() const { return allocatedBytes; }
-    size_t getCollections() const { return collections; }
-    size_t getObjectsCount() const {
-        size_t count = 0;
-        Obj* cur = objects_;
-        while (cur) {
-            count++;
-            cur = cur->next;
-        }
-        return count;
-    }
-
-    // ---- GC roots marking ----
     void mark(Obj* o) {
         if (!o) return;
         
@@ -95,7 +89,6 @@ public:
             if (current->marked) continue;
             current->marked = true;
             
-            // Добавляем все дочерние объекты в стек
             switch (current->type) {
                 case ObjType::String:
                     break;
@@ -140,17 +133,20 @@ public:
                     break;
                 }
                     
+                case ObjType::MethodRef:
+                    break;
+                    
                 default:
                     break;
             }
         }
     }
-
+    
     void sweep() {
         Obj* prev = nullptr;
         Obj* cur = objects_;
-        size_t freedBytes = 0;
-        size_t freedObjects = 0;
+        lastFreedBytes = 0;
+        lastFreedObjects = 0;
         
         while (cur) {
             if (cur->marked) {
@@ -166,44 +162,64 @@ public:
             if (prev) prev->next = cur;
             else objects_ = cur;
             
-            freedBytes += dead->size();
-            freedObjects++;
+            lastFreedBytes += dead->size();
+            lastFreedObjects++;
             destroyObject(dead);
         }
         
-        allocatedBytes -= freedBytes;
-        totalFreedBytes += freedBytes;
-        totalFreedObjects += freedObjects;
+        allocatedBytes -= lastFreedBytes;
+        totalFreedBytes += lastFreedBytes;
+        totalFreedObjects += lastFreedObjects;
         
-        // Уменьшаем порог, если освободили много памяти
-        if (freedBytes > allocatedBytes / 2) {
+        if (lastFreedBytes > allocatedBytes / 2) {
             nextGcThreshold = allocatedBytes * 3 / 2;
         }
     }
+    
+    size_t getBytesAllocated() const { return allocatedBytes; }
+    size_t getCollections() const { return collections; }
+    size_t getTotalFreedBytes() const { return totalFreedBytes; }
+    size_t getTotalFreedObjects() const { return totalFreedObjects; }
+    
+    size_t getObjectsCount() const {
+        size_t count = 0;
+        Obj* cur = objects_;
+        while (cur) {
+            count++;
+            cur = cur->next;
+        }
+        return count;
+    }
+    
+    void setLoggingEnabled(bool enabled) { enableLogging = enabled; }
+    size_t getLastFreedBytes() const { return lastFreedBytes; }
+    size_t getLastFreedObjects() const { return lastFreedObjects; }
 
 private:
     Obj* objects_ = nullptr;
     size_t allocatedBytes = 0;
-    size_t nextGcThreshold = 16 * 1024; // 16 KB начальный порог
+    size_t nextGcThreshold = 16 * 1024;
     size_t collections = 0;
     size_t totalFreedBytes = 0;
     size_t totalFreedObjects = 0;
+    size_t lastFreedBytes = 0;
+    size_t lastFreedObjects = 0;
+    bool enableLogging = false;
+    
+    void markAll(std::function<void(Heap&)> markRoots) {
+        markRoots(*this);
+    }
     
     void checkGC() {
         if (allocatedBytes >= nextGcThreshold) {
-            collectGarbage();
+            if (enableLogging) {
+                std::cerr << "[GC WARNING] Memory threshold reached (" 
+                          << allocatedBytes << " bytes), but no root provider.\n";
+                std::cerr << "             GC will run on next instruction cycle.\n";
+            }
         }
     }
     
-    void markAll() {
-        // Помечаем все живые объекты, начиная с корней
-        // Корни должны быть помещены через markRoots() перед вызовом этого метода
-    }
-
-    void sweepAll() {
-        sweep();
-    }
-
     void linkObject(Obj* o) { 
         o->next = objects_; 
         objects_ = o; 
@@ -266,4 +282,4 @@ private:
     }
 };
 
-} // namespace alkv::vm
+}
